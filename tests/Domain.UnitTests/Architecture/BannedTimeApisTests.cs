@@ -11,11 +11,29 @@ namespace Lingban.Domain.UnitTests.Architecture;
 public class BannedTimeApisTests
 {
     private static readonly Regex Banned = new(
-        @"DateTime\.Now\b|DateTime\.Today\b|UtcNow\.Date\b",
+        @"DateTime\.Now\b|DateTime\.Today\b|DateTimeOffset\.Now\b|UtcNow\.Date\b",
+        RegexOptions.Compiled);
+
+    // 谱系表只能经聚合方法写入:禁止批量改写与直接增删消耗记录(采购批次 Add 是合法入库,不禁)。
+    private static readonly Regex GenealogyBypass = new(
+        @"MaterialConsumptions\s*\.\s*(Add|AddRange|Remove|RemoveRange|ExecuteUpdate|ExecuteDelete)|MaterialLots\s*\.\s*(ExecuteUpdate|ExecuteDelete)",
         RegexOptions.Compiled);
 
     [Test]
     public void ProductionCodeDoesNotUseBannedTimeApis()
+    {
+        ScanSources(Banned).ShouldBeEmpty(
+            "禁止 DateTime.Now / DateTime.Today / DateTimeOffset.Now / UtcNow.Date——请传入 DateTimeOffset 或使用 ShiftCalendar。");
+    }
+
+    [Test]
+    public void GenealogyTablesAreOnlyWrittenThroughAggregates()
+    {
+        ScanSources(GenealogyBypass).ShouldBeEmpty(
+            "MaterialConsumption 只能经 WorkOrder.RecordConsumption 创建;禁止对谱系表直接增删或批量改写。");
+    }
+
+    private static List<string> ScanSources(Regex pattern)
     {
         string repoRoot = FindRepoRoot();
         var offenders = new List<string>();
@@ -36,15 +54,14 @@ public class BannedTimeApisTests
                     continue;
                 }
 
-                if (Banned.IsMatch(lines[i]))
+                if (pattern.IsMatch(lines[i]))
                 {
                     offenders.Add($"{Path.GetRelativePath(repoRoot, file)}:{i + 1}: {lines[i].Trim()}");
                 }
             }
         }
 
-        offenders.ShouldBeEmpty(
-            "禁止 DateTime.Now / DateTime.Today / UtcNow.Date——请传入 DateTimeOffset 或使用 ShiftCalendar。");
+        return offenders;
     }
 
     private static string FindRepoRoot()

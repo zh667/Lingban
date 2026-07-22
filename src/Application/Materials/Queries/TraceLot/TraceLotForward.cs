@@ -26,14 +26,16 @@ public class TraceLotForwardQueryHandler : IRequestHandler<TraceLotForwardQuery,
 
         Guard.Against.NotFound(request.LotId, root);
 
-        var visited = new HashSet<int> { root.Id };
-        return await BuildForwardNodeAsync(root, viaWorkOrder: null, visited, cancellationToken);
+        // 访问集是"当前递归路径"(防环),不是全树共享集合——
+        // 菱形谱系(同一批次流经多条支路)必须在每条支路都如实出现。
+        var path = new HashSet<int>();
+        return await BuildForwardNodeAsync(root, viaWorkOrder: null, path, cancellationToken);
     }
 
     private async Task<LotTraceNode> BuildForwardNodeAsync(
         MaterialLot lot,
         (int Id, string Code)? viaWorkOrder,
-        HashSet<int> visited,
+        HashSet<int> path,
         CancellationToken cancellationToken)
     {
         // 本批次被哪些工单消耗。
@@ -45,6 +47,7 @@ public class TraceLotForwardQueryHandler : IRequestHandler<TraceLotForwardQuery,
             .ToListAsync(cancellationToken);
 
         var children = new List<LotTraceNode>();
+        path.Add(lot.Id);
         foreach (var order in consumingOrders)
         {
             // 这些工单产出的批次,即下游节点。
@@ -56,16 +59,17 @@ public class TraceLotForwardQueryHandler : IRequestHandler<TraceLotForwardQuery,
 
             foreach (MaterialLot output in outputs)
             {
-                if (!visited.Add(output.Id))
+                if (path.Contains(output.Id))
                 {
                     continue;
                 }
 
                 children.Add(await BuildForwardNodeAsync(
-                    output, (order.WorkOrderId, order.Code), visited, cancellationToken));
+                    output, (order.WorkOrderId, order.Code), path, cancellationToken));
             }
         }
 
+        path.Remove(lot.Id);
         return ToNode(lot, viaWorkOrder, children);
     }
 

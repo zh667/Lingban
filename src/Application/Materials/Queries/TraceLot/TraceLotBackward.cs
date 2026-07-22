@@ -26,17 +26,20 @@ public class TraceLotBackwardQueryHandler : IRequestHandler<TraceLotBackwardQuer
 
         Guard.Against.NotFound(request.LotId, root);
 
-        var visited = new HashSet<int> { root.Id };
-        return await BuildBackwardNodeAsync(root, viaWorkOrder: null, visited, cancellationToken);
+        // 访问集是"当前递归路径"(防环),不是全树共享集合——
+        // 菱形谱系(同一批次流经多条支路)必须在每条支路都如实出现。
+        var path = new HashSet<int>();
+        return await BuildBackwardNodeAsync(root, viaWorkOrder: null, path, cancellationToken);
     }
 
     private async Task<LotTraceNode> BuildBackwardNodeAsync(
         MaterialLot lot,
         (int Id, string Code)? viaWorkOrder,
-        HashSet<int> visited,
+        HashSet<int> path,
         CancellationToken cancellationToken)
     {
         var children = new List<LotTraceNode>();
+        path.Add(lot.Id);
 
         // 采购批次(无产出工单)是谱系叶子;自产批次沿产出工单的消耗记录上溯。
         if (lot.ProducedByWorkOrderId is int workOrderId)
@@ -56,16 +59,17 @@ public class TraceLotBackwardQueryHandler : IRequestHandler<TraceLotBackwardQuer
 
             foreach (MaterialLot source in sources)
             {
-                if (!visited.Add(source.Id))
+                if (path.Contains(source.Id))
                 {
                     continue;
                 }
 
                 children.Add(await BuildBackwardNodeAsync(
-                    source, (workOrderId, workOrderCode), visited, cancellationToken));
+                    source, (workOrderId, workOrderCode), path, cancellationToken));
             }
         }
 
+        path.Remove(lot.Id);
         return new LotTraceNode
         {
             LotId = lot.Id,

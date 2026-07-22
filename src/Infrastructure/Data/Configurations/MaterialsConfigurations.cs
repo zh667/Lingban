@@ -49,6 +49,13 @@ public class MaterialLotConfiguration : IEntityTypeConfiguration<MaterialLot>
 
         builder.HasIndex(lot => new { lot.TenantId, lot.LotNumber }).IsUnique();
 
+        // PostgreSQL xmin 乐观并发:并发扣减同一批次时后写方冲突重试,杜绝超卖。
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
+
         builder.HasOne(lot => lot.Product)
             .WithMany()
             .HasForeignKey(lot => lot.ProductId)

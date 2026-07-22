@@ -29,6 +29,40 @@ public class ShiftCalendar
         {
             throw new ArgumentException("At least one active shift is required.", nameof(shifts));
         }
+
+        RejectOverlaps(_shifts);
+    }
+
+    /// <summary>班次窗口重叠会让时刻归属取决于集合顺序,构造时直接拒绝。</summary>
+    private static void RejectOverlaps(IReadOnlyList<Shift> shifts)
+    {
+        var windows = new List<(string Code, int StartMinute, int EndMinute)>();
+        foreach (Shift shift in shifts)
+        {
+            int duration = shift.CrossesMidnight
+                ? 24 * 60 - (int)(shift.StartLocalTime - shift.EndLocalTime).TotalMinutes
+                : (int)(shift.EndLocalTime - shift.StartLocalTime).TotalMinutes;
+
+            // 三个相邻开班日的窗口足以暴露任何周期性重叠。
+            for (int day = 0; day < 3; day++)
+            {
+                int start = day * 24 * 60 + (int)shift.StartLocalTime.ToTimeSpan().TotalMinutes;
+                windows.Add((shift.Code, start, start + duration));
+            }
+        }
+
+        for (int i = 0; i < windows.Count; i++)
+        {
+            for (int j = i + 1; j < windows.Count; j++)
+            {
+                if (windows[i].StartMinute < windows[j].EndMinute &&
+                    windows[j].StartMinute < windows[i].EndMinute)
+                {
+                    throw new ArgumentException(
+                        $"Shifts '{windows[i].Code}' and '{windows[j].Code}' overlap.", nameof(shifts));
+                }
+            }
+        }
     }
 
     /// <summary>
