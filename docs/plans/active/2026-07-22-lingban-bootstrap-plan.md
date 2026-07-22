@@ -20,10 +20,11 @@
 - [x] 传递依赖漏洞治理:开启 CentralPackageTransitivePinningEnabled,钉版 System.Security.Cryptography.Xml 10.0.10 / MessagePack 3.1.8 / OpenTelemetry 1.17.0 / Microsoft.OpenApi 2.11.0,NuGet audit 零告警。
 - [x] 本地验证:build 0 警告 0 错误;Domain + Application 单元测试 14/14 通过;format 干净。
 - [x] AGENTS.md 第 1、2 节已回填实测事实。
-- [ ] **待用户**:本机安装 Docker(功能/集成测试与 `dotnet run --project src/AppHost` 依赖)。
-- [ ] **待用户**:GitHub Settings:main 分支保护(required checks 绑 CI)+ secret scanning push protection(对照知识库《GitHub 新仓库质量与安全配置清单》)。
+- [x] Docker 29.6.2 已装,本地全量测试 33/33 通过(功能测试首跑因拉镜像冷启动超时,属一次性现象)。
+- [x] GitHub 门禁已配:main ruleset(require PR + required check `build-and-test`)实测直推被拒;secret scanning push protection 开启。
+- [x] CodeQL 决策:暂不启用;M4(MCP Server 网络暴露面出现)时用页面 default setup 一键开启,记入 M4 验收项。
 
-**验收**:克隆仓库 → `dotnet build && dotnet test`(需 Docker)全绿;CI 在 PR 上跑通;直推 main 被拒。当前状态:除两项"待用户"外全部完成;首次 CI 运行结果待推送后确认。
+**验收:✅ 全部通过(2026-07-22)**——本地 build + 全量测试全绿、CI 两次运行全绿、直推 main 被拒。M0 关闭,进入 M1。
 
 ## 里程碑 1:领域心脏(MES 铁律落地,趁没有代码债)
 
