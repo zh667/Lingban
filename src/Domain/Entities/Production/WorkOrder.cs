@@ -142,7 +142,8 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
         decimal quantity,
         int workstationId,
         DateTimeOffset recordedAtUtc,
-        string? recordedBy = null)
+        string? recordedBy = null,
+        Guid? eventId = null)
     {
         EnsureInProgress("record material consumption");
 
@@ -173,7 +174,8 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
             UnitOfMeasure = lot.UnitOfMeasure,
             WorkstationId = workstationId,
             RecordedAtUtc = recordedAtUtc.ToUniversalTime(),
-            RecordedBy = recordedBy
+            RecordedBy = recordedBy,
+            EventId = eventId
         };
 
         _consumptions.Add(consumption);
