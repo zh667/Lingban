@@ -8,28 +8,29 @@
 - **名称**:Lingban(领班)——https://github.com/zh667/Lingban
 - **目标**:带事实校验的制造业 AI Copilot("AI 领班"):MES 数据查询、异常分析、批次追溯、SOP/RAG、OEE 与生产报表;全部 MES 工具同时以 MCP Server 对外暴露。
 - **命名约定**:解决方案 `Lingban.sln`;命名空间 `Lingban.Domain / Lingban.Application / Lingban.Infrastructure / Lingban.Web / Lingban.Agent`;MCP Server 名 `lingban-mes`。
-- **技术栈**:ASP.NET Core 8 + EF Core 8 + PostgreSQL 16(pgvector);Agent 层 Microsoft Agent Framework(`Microsoft.Agents.AI`)+ 官方 MCP C# SDK;前端 Next.js + TypeScript + Tailwind。
-- **骨架来源**:jasontaylordev/CleanArchitecture(`dotnet new ca-sln`)。
+- **技术栈**:.NET 10(ASP.NET Core + EF Core)+ PostgreSQL 17(pgvector 镜像,.NET Aspire 容器编排,无 docker-compose);Agent 层 Microsoft Agent Framework(`Microsoft.Agents.AI`)+ 官方 MCP C# SDK;前端 Next.js + TypeScript + Tailwind(M6 才引入)。
+- **骨架来源**:jasontaylordev/CleanArchitecture v10.8.0(已生成:`src/{Domain,Application,Infrastructure,Web,Agent,AppHost,ServiceDefaults,Shared}`,Azure 资源已移除)。
 - **可移植资产**:旧仓库 `zh667/Mes-Agent` 的工具类、FactVerifier 验证框架、i18n 双语目录、DeviceSimulator;教训清单见本仓库 `docs/reviews/2026-07-22-agent-mes-critique.md`。
 - **包管理器**:NuGet(后端)、pnpm(前端)。
-- **运行时版本**:.NET 8 SDK、Node 20+。
-- **必需服务**:PostgreSQL 16(启用 pgvector 扩展);Redis 可选。
+- **运行时版本**:.NET 10 SDK(`global.json` 钉 10.0.201,rollForward latestFeature)、Node 20+(M6 前才不需要)。
+- **必需服务**:Docker(Aspire 自动拉起 `pgvector/pgvector:pg17` 容器;功能/集成测试同样依赖)。
+- **依赖治理**:NuGet 安全审计按 error 处理;传递依赖漏洞在 `Directory.Packages.props` 集中钉版(已开启 CentralPackageTransitivePinningEnabled)。
 - **环境变量说明**:`.env.example`;LLM API key 走环境变量或 user-secrets,禁止入库。
 - **默认分支**:main。
 - **主代码**:`src/`;**测试**:`tests/`;**前端**:`web/`。
 
-## 2. 真实命令(项目初始化后按实际修正;初始化前为预期默认)
+## 2. 真实命令(2026-07-22 实测)
 
-- 安装:`dotnet restore`;前端 `cd web && pnpm install`
-- 开发:`dotnet run --project src/Web`;前端 `pnpm dev`
-- 格式检查:`dotnet format --verify-no-changes`
-- Lint/类型检查(前端):`pnpm lint` / `pnpm typecheck`
-- 单元测试:`dotnet test`;前端 `pnpm test`
-- 集成测试:`dotnet test tests/*.IntegrationTests`(需本地 PostgreSQL 或 Testcontainers)
-- 构建:`dotnet build`;前端 `pnpm build`
+- 安装:`dotnet restore Lingban.slnx`
+- 开发(整套,Aspire dashboard,需 Docker):`dotnet run --project src/AppHost`
+- 格式检查:`dotnet format Lingban.slnx --verify-no-changes --no-restore`
+- 构建:`dotnet build Lingban.slnx --no-restore`
+- 单元测试(无 Docker 可跑):`dotnet test tests/Domain.UnitTests tests/Application.UnitTests --no-build`
+- 全量测试(功能/集成,需 Docker):`dotnet test Lingban.slnx --no-build`
+- CI 等价检查:restore → build → format verify → test(`.github/workflows/ci.yml`,与上述命令一致)
 - Agent eval:无(eval 基建建成后更新此行,并同步第 11 节)
-- UI 真实验证:Playwright(webapp-testing skill)
-- 本地整套:`docker compose up --build`
+- UI 真实验证:Playwright(webapp-testing skill;M6 起适用)
+- 前端命令(M6 引入后补):`pnpm install / dev / lint / typecheck / test / build`
 
 不得把未执行的命令描述为已通过。
 

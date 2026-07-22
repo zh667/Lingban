@@ -12,14 +12,18 @@
 
 **目标**:空仓库 → 可构建的骨架。
 
-- [ ] `dotnet new install Clean.Architecture.Solution.Template`,`dotnet new ca-sln` 生成骨架,重命名为 `Lingban.sln` 与 `Lingban.*` 命名空间(Domain / Application / Infrastructure / Web)。
-- [ ] 新增 `src/Lingban.Agent` 类库(Agent 循环与 MCP Server 宿主,后续里程碑填充)。
-- [ ] PostgreSQL 16 + pgvector 的 `docker-compose.yml`;`.env.example`(LLM key 占位,不入库)。
-- [ ] 保留模板自带 GitHub Actions workflow,删除 Azure 部署段;确认 `dotnet build / test / format --verify-no-changes` 本地全绿。
-- [ ] 首次提交推送后,GitHub Settings:main 分支保护(required checks 绑 CI)+ secret scanning push protection(对照知识库《GitHub 新仓库质量与安全配置清单》)。
-- [ ] 回填 AGENTS.md 第 2 节的真实命令与 CI 等价检查。
+- [x] 骨架已生成:ca-sln v10.8.0,`-cf None -db postgresql`,`Lingban.slnx` + `Lingban.*` 命名空间;模板为 .NET 10 + Aspire 编排(AppHost 自动拉 `pgvector/pgvector:pg17` 容器,**取代原计划的 docker-compose**)。
+- [x] 新增 `src/Agent`(Lingban.Agent)类库并入解决方案。
+- [x] Azure 资源已移除(AppHost 改纯 `AddPostgres`,删 Azure.AppContainers / Azure.PostgreSQL / JavaScript 包)。
+- [x] `.env.example`(ANTHROPIC_API_KEY 占位)。
+- [x] 模板未带 CI,已自写 `.github/workflows/ci.yml`(restore → build → format verify → 全量 test;GitHub runner 自带 Docker 可跑功能测试)。
+- [x] 传递依赖漏洞治理:开启 CentralPackageTransitivePinningEnabled,钉版 System.Security.Cryptography.Xml 10.0.10 / MessagePack 3.1.8 / OpenTelemetry 1.17.0 / Microsoft.OpenApi 2.11.0,NuGet audit 零告警。
+- [x] 本地验证:build 0 警告 0 错误;Domain + Application 单元测试 14/14 通过;format 干净。
+- [x] AGENTS.md 第 1、2 节已回填实测事实。
+- [ ] **待用户**:本机安装 Docker(功能/集成测试与 `dotnet run --project src/AppHost` 依赖)。
+- [ ] **待用户**:GitHub Settings:main 分支保护(required checks 绑 CI)+ secret scanning push protection(对照知识库《GitHub 新仓库质量与安全配置清单》)。
 
-**验收**:克隆仓库 → `docker compose up -d db` → `dotnet build && dotnet test` 全绿;CI 在 PR 上跑通;直推 main 被拒。
+**验收**:克隆仓库 → `dotnet build && dotnet test`(需 Docker)全绿;CI 在 PR 上跑通;直推 main 被拒。当前状态:除两项"待用户"外全部完成;首次 CI 运行结果待推送后确认。
 
 ## 里程碑 1:领域心脏(MES 铁律落地,趁没有代码债)
 

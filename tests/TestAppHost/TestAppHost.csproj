@@ -1,0 +1,18 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.2.0">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Lingban.TestAppHost</RootNamespace>
+    <AssemblyName>Lingban.TestAppHost</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shared\Shared.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>
