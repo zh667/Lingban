@@ -112,6 +112,22 @@ public static class TestApp
         await context.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// 保存实体图:已有主键的可达实体按 Unchanged 附加,仅无键实体插入。
+    /// 用于聚合根携带已保存关联(如工单消耗已入库的批次)的场景。
+    /// </summary>
+    public static async Task AttachGraphAsync<TEntity>(TEntity entity)
+        where TEntity : class
+    {
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+
+        var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        context.Attach(entity);
+
+        await context.SaveChangesAsync();
+    }
+
     public static async Task<int> CountAsync<TEntity>() where TEntity : class
     {
         using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();

@@ -30,13 +30,16 @@
 
 **目标**:把旧项目缺的两颗心脏之一(物料)和全部领域铁律建成 Domain 层,schema 参考 qcadoo MES 与 Odoo mrp(抄结构不抄代码)。
 
-- [ ] 实体:Product、BomLine、**MaterialLot(物料批次)**、**MaterialConsumption(消耗记录,lot→工单→成品 lot 的谱系链)**、WorkOrder、WorkOrderOperation、ProcessRoute/ProcessStep、Equipment、QualityInspection、DefectRecord。
-- [ ] **WorkOrder 状态机**:转换只走领域方法(`Release()`、`Start()`、`Complete()`…),非法转换抛领域异常;禁止外部直接赋值 Status。
-- [ ] **FactoryCalendar + Shift(工厂日历与班次)**:统一"今天/本班次"切分服务;存储一律 UTC,业务切分按工厂时区与班次;全库禁用 `DateTime.UtcNow.Date` 划天(加架构测试或 analyzer 机械保证)。
-- [ ] 数量闭环:计划/完工/合格/报废/返工分开记录;超产不截断,作为可查询信号。
-- [ ] EF Core 配置与首个迁移;种子数据(含跨批次消耗的谱系样例)。
+- [x] 实体:Product、BomLine、**MaterialLot**、**MaterialConsumption**(谱系边,只能经 `WorkOrder.RecordConsumption` 创建)、WorkOrder、WorkOrderOperation、ProcessRoute/ProcessStep、ProductionLine/Workstation、QualityInspection、DefectRecord/DefectType、Shift。Equipment 实体推迟到 M2(随设备状态工具一起进)。
+- [x] **WorkOrder 状态机**:Draft→Released→InProgress→Completed,Cancel 仅限开工前;非法转换抛 `InvalidWorkOrderTransitionException`;Status 私有 setter。
+- [x] **ShiftCalendar 领域服务**:UTC 时刻 → (班次, 生产日),跨天夜班归开班日;`GetProductionDayBoundsUtc` 供"今天的工单/OEE"划界;禁用 API 由 `BannedTimeApisTests` 机械保证(扫描 src/ 拒绝 DateTime.Now/Today/UtcNow.Date,已顺手修掉模板 WeatherForecasts 的一处违例)。
+- [x] 数量闭环:完工/合格/报废/返工四账分记,decimal(18,3) 全局约定,超产暴露(`IsOverproduced`)不截断。
+- [x] **多租户**:ITenantEntity + TenantInterceptor 盖章 + DbContext 表达式树全局过滤器;M1 租户来自配置(默认 "default")。
+- [x] EF 配置(租户复合唯一索引、谱系边 Restrict 删除、消耗集合私有字段访问);~~首个迁移~~ 模板开发期为 EnsureCreated 策略,迁移推迟到有部署目标时。
+- [x] 种子数据:SMT 电子装配两级谱系(来料 → WO-SEED-01 → PCBA 批次 → WO-SEED-02 → 整机批次)+ 双班制 + 缺陷类型。
+- [x] 追溯查询:`TraceLotForwardQuery` / `TraceLotBackwardQuery`(Application 层 MediatR,含环路防护)。
 
-**验收**(全部是测试):① 正向追溯——给定来料批次,列出流入的全部成品批次;② 反向追溯——给定成品批次,列出全部来料批次(召回场景);③ 非法状态转换抛异常;④ 班次切分在东八区工厂 07:59/08:01 两个时刻归属正确。
+**验收:✅ 全部通过(2026-07-22,51/51 测试)**——① 正向追溯与 ② 反向追溯为真库功能测试(召回/客诉场景,含供应商批号叶子);③ 非法转换抛异常;④ 东八区 07:59→前日夜班 / 08:01→当日白班,另验 UTC 午夜不切分生产日。
 
 ## 里程碑 2:应用服务与工具层(移植 + 适配)
 
@@ -105,3 +108,6 @@
 | 2026-07-22 | 项目定名 Lingban(领班) | 身份而非类别;全球无撞车;隐喻=车间里全知的执行者 |
 | 2026-07-22 | 基座:ca-sln + Microsoft Agent Framework + MCP C# SDK;不用 ABP、不用 BotSharp | 见知识库《MES Agent 另起炉灶方案》 |
 | 2026-07-22 | 领域心脏(物料/状态机/日历)先于 Agent 循环 | 旧项目教训:基建齐全但两颗心脏缺失;趁零代码债先立铁律 |
+| 2026-07-22 | M1 建模四决定:离散制造、批次级追溯、工位实记消耗、多租户即刻进模型 | 用户拍板(均采纳推荐);实记保证谱系真实,倒冲的"理论谱系"召回失真 |
+| 2026-07-22 | M1 默认值:Asia/Shanghai 可配、班次是数据(种子双班制)、夜班归开班日、decimal(18,3) 无换算表、报废/返工只记账、单工厂两级层级、SMT 种子场景 | 不值得占用户决策带宽的小项,声明假设后继续 |
+| 2026-07-22 | CodeQL 推迟到 M4 用页面 default setup 开启 | 现在扫模板骨架零产出;MCP Server 出现才有真攻击面;public 仓库免费 |

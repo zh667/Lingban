@@ -2,6 +2,7 @@
 using Lingban.Infrastructure.Data;
 using Lingban.Infrastructure.Data.Interceptors;
 using Lingban.Infrastructure.Identity;
+using Lingban.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -17,6 +18,8 @@ public static class DependencyInjection
         var connectionString = builder.Configuration.GetConnectionString(Services.Database);
         Guard.Against.Null(connectionString, message: $"Connection string '{Services.Database}' not found.");
 
+        builder.Services.AddScoped<ITenantContext, TenantContext>();
+        builder.Services.AddScoped<ISaveChangesInterceptor, TenantInterceptor>();
         builder.Services.AddScoped<ISaveChangesInterceptor, AuditableEntityInterceptor>();
         builder.Services.AddScoped<ISaveChangesInterceptor, DispatchDomainEventsInterceptor>();
 
