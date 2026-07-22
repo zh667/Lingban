@@ -18,6 +18,7 @@ public record WorkOrderSummaryDto(
 
 public record TodayWorkOrdersDto(
     DateOnly ProductionDate,
+    int? ProductionLineId,
     DateTimeOffset FromUtc,
     DateTimeOffset ToUtc,
     IReadOnlyList<WorkOrderSummaryDto> Orders,
@@ -82,6 +83,7 @@ public class GetTodayWorkOrdersQueryHandler : IRequestHandler<GetTodayWorkOrders
 
         return new TodayWorkOrdersDto(
             productionDate,
+            request.ProductionLineId,
             fromUtc,
             toUtc,
             orders,

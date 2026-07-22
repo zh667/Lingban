@@ -138,6 +138,102 @@ public class WorkOrderWritePathTests : TestBase
     }
 
     [Test]
+    public async Task ReusedEventIdWithDifferentPayloadIsRejected()
+    {
+        // Codex 二审 #1:同键不同 payload 不许被静默当作成功。
+        await SeedMasterDataAsync();
+        int orderId = await CreateStartedOrderAsync("WO-FPRINT");
+        var eventId = Guid.NewGuid();
+
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderId,
+            MaterialLotId = _rawLotId,
+            Quantity = 10m,
+            WorkstationId = _stationId,
+            EventId = eventId
+        });
+
+        var mismatched = new RecordConsumptionCommand
+        {
+            WorkOrderId = orderId,
+            MaterialLotId = _rawLotId,
+            Quantity = 20m,
+            WorkstationId = _stationId,
+            EventId = eventId
+        };
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(
+            () => TestApp.SendAsync(mismatched));
+        exception.Message.ShouldContain("Idempotency");
+    }
+
+    [Test]
+    public async Task ConcurrentReverseEdgesCannotFormCycle()
+    {
+        // Codex 二审 #2:互为反向的两条边并发写入,谱系闸门必须串行化,
+        // 恰好一边成功、另一边被环检测拒绝——事后谱系必须无环。
+        await SeedMasterDataAsync();
+
+        int orderAId = await CreateStartedOrderAsync("WO-RACE-A");
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderAId,
+            MaterialLotId = _rawLotId,
+            Quantity = 5m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        int lotAId = await TestApp.SendAsync(new ProduceLotCommand
+        {
+            WorkOrderId = orderAId,
+            LotNumber = "L-RACE-A",
+            Quantity = 5m
+        });
+
+        int orderBId = await CreateStartedOrderAsync("WO-RACE-B", _rawProductId);
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderBId,
+            MaterialLotId = _rawLotId,
+            Quantity = 5m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        int lotBId = await TestApp.SendAsync(new ProduceLotCommand
+        {
+            WorkOrderId = orderBId,
+            LotNumber = "L-RACE-B",
+            Quantity = 5m
+        });
+
+        // 并发:A 吃 LB,B 吃 LA。
+        Task<int> aEatsB = TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderAId,
+            MaterialLotId = lotBId,
+            Quantity = 1m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        Task<int> bEatsA = TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderBId,
+            MaterialLotId = lotAId,
+            Quantity = 1m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+
+        var failures = new List<Exception>();
+        try { await aEatsB; } catch (Exception exception) { failures.Add(exception); }
+        try { await bEatsA; } catch (Exception exception) { failures.Add(exception); }
+
+        failures.Count.ShouldBe(1, "两条反向边必须恰好一条被拒绝");
+        failures[0].ShouldBeOfType<InvalidOperationException>().Message.ShouldContain("cycle");
+    }
+
+    [Test]
     public async Task CompleteRequiresConsumptionOutputAndMatchingQuantities()
     {
         await SeedMasterDataAsync();

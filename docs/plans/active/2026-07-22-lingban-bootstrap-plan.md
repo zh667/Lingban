@@ -92,6 +92,34 @@ Codex CLI 审查原始 PR #2 diff,报 7 bug / 7 风险 / 1 建议。逐条核实
 
 **验收**:每个工具查询有功能测试 + 对应 VerificationRule 且测试含"篡改被抓"路径;`dotnet test` 全绿;grep 不到手写的假 SQL。当前 70/70 绿(收尾两项待办)。
 
+## M2 审查跟进(Codex 二审,2026-07-23)
+
+Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债"还了但成色不足"。处置:
+
+**已修(同 PR 追加提交,均有回归测试):**
+- #1 幂等竞态与键碰撞 → 指纹校验(同键不同 payload 显式拒绝)+ DbUpdateException 兜底复查;并发同键被闸门串行化。
+- #2 环检测 TOCTOU → **IGenealogySerializedExecutor**:租户级 pg_advisory_xact_lock,消耗/产出/完工的"检测+写入"同锁串行;并发反向边测试(恰好一边被拒)。
+- #3 Complete 绕过 → TOCTOU 由闸门解决;裸调用 WorkOrder.Complete() 由架构守卫禁止(白名单:领域/命令/种子)。
+- #4 开放停机 → 截断到 min(AsOf, 日终),不再把未来算成停机;OeeDto 增 AsOfUtc。
+- #5 重叠停机 → 工具与校验路径各自做区间并集(实现独立,数字必须一致)。
+- #6/#7 → 产线过滤进校验 SQL(DTO 携带 ProductionLineId);缺陷校验补 AsOf 上界。
+- #8(部分)→ 规则不再信任 DTO 时间范围,从工厂日历独立重建边界与班次区间;核对字段扩展:Today 五项、Delayed 含 ID 集合、Defect 含分类合计、OEE 含计划分钟与公式一致性(带 clamp)。
+- #9 → CreateWorkOrder 校验 PlannedEnd > PlannedStart、ID 为正。
+- #10 → 消耗校验工位与工单同产线;RecordedBy 长度、ID 正数进 Validator。
+- #11(部分)→ DataSource 加 Unspecified=0 哨兵 + CHECK 约束(Source<>0、End>Start),模拟器忘标来源直接写不进去。
+- #13(部分)→ 新增:空档日历(计划 480 非 540)、重叠停机并集、开放停机截断、并发环竞赛、指纹碰撞、产线过滤校验、缺陷 AsOf、四工具多字段篡改测试。
+
+**缓修(入债表):**
+| 项 | 推荐修复时机 | 触发条件 |
+| --- | --- | --- |
+| #8 余下:全部展示事实的逐字段复核(明细数量、OEE 分量) | M3,DTO 进入 Agent 答案时 | LLM 开始引用某字段,该字段就必须有校验 |
+| #11 余下:设备事实的受控工厂方法 + 写入侧重叠拒绝 | M2 收尾(模拟器 PR) | 模拟器落地即触发 |
+| #12:QueryLog 工具级边界(checkpoint/关联 ID) | M3,DebugInfo 消费端落地时 | 同一作用域出现多工具调用 |
+| #14:工具 LLM contract(Description/schema/eval)与 HITL | M3 注册时 | 即 AGENTS.md 铁律 #3 的交付时点,口径已在 M2 小节修正 |
+| #13 余下:唯一索引兜底路径的确定性并发测试 | 守卫被真实击中一次时 | 闸门已串行化,该路径为理论后盾 |
+
+**口径修正**:M2 交付的是"工具查询内核",非完整 Agent 工具;"每工具四件套"的验收移至 M3 注册时点。
+
 ## 里程碑 3:真 Agent 循环(装第二颗心脏)
 
 **目标**:LLM 驱动的工具编排,替代旧项目的关键词 if-else。

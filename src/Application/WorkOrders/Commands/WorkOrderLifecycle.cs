@@ -28,8 +28,14 @@ public class CreateWorkOrderCommandValidator : AbstractValidator<CreateWorkOrder
     public CreateWorkOrderCommandValidator()
     {
         RuleFor(command => command.Code).NotEmpty().MaximumLength(64);
+        RuleFor(command => command.ProductId).GreaterThan(0);
+        RuleFor(command => command.ProductionLineId).GreaterThan(0);
         RuleFor(command => command.PlannedQuantity).GreaterThan(0);
         RuleFor(command => command.UnitOfMeasure).NotEmpty().MaximumLength(16);
+        RuleFor(command => command.PlannedEndUtc)
+            .GreaterThan(command => command.PlannedStartUtc!.Value)
+            .When(command => command.PlannedStartUtc.HasValue && command.PlannedEndUtc.HasValue)
+            .WithMessage("PlannedEndUtc must be after PlannedStartUtc.");
     }
 }
 

@@ -26,6 +26,27 @@ public class BannedTimeApisTests
             "禁止 DateTime.Now / DateTime.Today / DateTimeOffset.Now / UtcNow.Date——请传入 DateTimeOffset 或使用 ShiftCalendar。");
     }
 
+    // 完工只许经 CompleteWorkOrderCommand(前置校验 + 谱系闸门)或领域/种子内部调用。
+    private static readonly Regex CompleteBypass = new(@"\.Complete\(", RegexOptions.Compiled);
+
+    private static readonly string[] CompleteAllowedFiles =
+    {
+        "WorkOrder.cs",
+        "ReportAndComplete.cs",
+        "ApplicationDbContextInitialiser.cs"
+    };
+
+    [Test]
+    public void WorkOrderCompleteIsOnlyCalledFromSanctionedEntryPoints()
+    {
+        List<string> offenders = ScanSources(CompleteBypass)
+            .Where(offender => !CompleteAllowedFiles.Any(allowed => offender.Contains(allowed)))
+            .ToList();
+
+        offenders.ShouldBeEmpty(
+            "WorkOrder.Complete() 绕过完工前置校验;请走 CompleteWorkOrderCommand。");
+    }
+
     [Test]
     public void GenealogyTablesAreOnlyWrittenThroughAggregates()
     {

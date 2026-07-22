@@ -10,6 +10,7 @@ public record OeeDto(
     int EquipmentId,
     string EquipmentCode,
     DateOnly ProductionDate,
+    DateTimeOffset AsOfUtc,
     IReadOnlyList<ShiftPeriodDto> ShiftPeriods,
     double PlannedMinutes,
     double DowntimeMinutes,
@@ -59,8 +60,8 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
         Guard.Against.NotFound(request.EquipmentId, equipment);
 
         ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
-        DateOnly productionDate = request.ProductionDate
-            ?? calendar.GetProductionDate(request.AsOfUtc ?? _timeProvider.GetUtcNow());
+        DateTimeOffset asOf = request.AsOfUtc ?? _timeProvider.GetUtcNow();
+        DateOnly productionDate = request.ProductionDate ?? calendar.GetProductionDate(asOf);
 
         IReadOnlyList<ShiftPeriod> periods = calendar.GetShiftPeriods(productionDate);
         double plannedMinutes = periods.Sum(period => (period.EndUtc - period.StartUtc).TotalMinutes);
@@ -76,14 +77,38 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
             .Select(record => new { record.StartUtc, record.EndUtc })
             .ToListAsync(cancellationToken);
 
-        double downtimeMinutes = 0d;
-        foreach (var downtime in downtimes)
+        // 开放停机(EndUtc null)截断到 asOf 与日终的较早者——未发生的时间不算停机;
+        // 多条停机先做区间并集,重叠不重复计数;再与班次区间求交。
+        DateTimeOffset openEndClip = asOf < dayEnd ? asOf : dayEnd;
+        var effective = downtimes
+            .Select(downtime => (Start: downtime.StartUtc, End: downtime.EndUtc ?? openEndClip))
+            .Where(interval => interval.End > interval.Start)
+            .OrderBy(interval => interval.Start)
+            .ToList();
+
+        var merged = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        foreach (var interval in effective)
         {
-            DateTimeOffset downtimeEnd = downtime.EndUtc ?? dayEnd;
+            if (merged.Count > 0 && interval.Start <= merged[^1].End)
+            {
+                if (interval.End > merged[^1].End)
+                {
+                    merged[^1] = (merged[^1].Start, interval.End);
+                }
+            }
+            else
+            {
+                merged.Add(interval);
+            }
+        }
+
+        double downtimeMinutes = 0d;
+        foreach (var interval in merged)
+        {
             foreach (ShiftPeriod period in periods)
             {
-                DateTimeOffset overlapStart = downtime.StartUtc > period.StartUtc ? downtime.StartUtc : period.StartUtc;
-                DateTimeOffset overlapEnd = downtimeEnd < period.EndUtc ? downtimeEnd : period.EndUtc;
+                DateTimeOffset overlapStart = interval.Start > period.StartUtc ? interval.Start : period.StartUtc;
+                DateTimeOffset overlapEnd = interval.End < period.EndUtc ? interval.End : period.EndUtc;
                 if (overlapEnd > overlapStart)
                 {
                     downtimeMinutes += (overlapEnd - overlapStart).TotalMinutes;
@@ -131,6 +156,7 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
             equipment.Id,
             equipment.Code,
             productionDate,
+            asOf,
             periods.Select(period => new ShiftPeriodDto(period.ShiftCode, period.StartUtc, period.EndUtc)).ToList(),
             plannedMinutes,
             downtimeMinutes,

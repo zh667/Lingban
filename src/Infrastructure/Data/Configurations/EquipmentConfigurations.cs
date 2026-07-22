@@ -35,6 +35,12 @@ public class EquipmentStatusRecordConfiguration : IEntityTypeConfiguration<Equip
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(record => new { record.TenantId, record.EquipmentId, record.StartUtc });
+
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_EquipmentStatus_EndAfterStart", "\"EndUtc\" IS NULL OR \"EndUtc\" > \"StartUtc\"");
+            table.HasCheckConstraint("CK_EquipmentStatus_SourceSpecified", "\"Source\" <> 0");
+        });
     }
 }
 
@@ -52,5 +58,11 @@ public class DowntimeRecordConfiguration : IEntityTypeConfiguration<DowntimeReco
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(record => new { record.TenantId, record.EquipmentId, record.StartUtc });
+
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_Downtime_EndAfterStart", "\"EndUtc\" IS NULL OR \"EndUtc\" > \"StartUtc\"");
+            table.HasCheckConstraint("CK_Downtime_SourceSpecified", "\"Source\" <> 0");
+        });
     }
 }

@@ -192,6 +192,69 @@ public class ToolsAndVerificationTests : TestBase
     }
 
     [Test]
+    public async Task LineFilteredTodayQueryVerifiesCorrectly()
+    {
+        // Codex 二审 #6:产线过滤必须进入校验路径,正确结果不得被误判 Discrepancy。
+        await SeedFactoryAsync();
+
+        TodayWorkOrdersDto filtered = await TestApp.SendAsync(
+            new GetTodayWorkOrdersQuery(_lineId, AsOf));
+
+        filtered.TotalCount.ShouldBe(2);
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, filtered)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task DefectVerificationRespectsAsOfUpperBound()
+    {
+        // Codex 二审 #7:历史回放时,晚于 AsOf 的新记录不得污染校验。
+        await SeedFactoryAsync();
+        DateTimeOffset historicalAsOf = AsOf.AddDays(1);
+
+        DefectSummaryDto summary = await TestApp.SendAsync(new GetDefectSummaryQuery(7, historicalAsOf));
+        summary.TotalQuantity.ShouldBe(10m);
+
+        await TestApp.ExecuteDbContextAsync(async context =>
+        {
+            var lateType = new Domain.Entities.Quality.DefectType { Code = "LATE", Name = "晚到缺陷" };
+            context.Add(new Domain.Entities.Quality.DefectRecord
+            {
+                DefectType = lateType,
+                Quantity = 99m,
+                RecordedAtUtc = historicalAsOf.AddHours(1)
+            });
+            await context.SaveChangesAsync();
+        });
+
+        (await VerifyAsync(ToolNames.GetDefectSummary, summary)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task TamperedSecondaryFactsAreCaught()
+    {
+        // Codex 二审 #8:不止总数——状态分布、明细 ID、分类合计都要被独立路径钉住。
+        await SeedFactoryAsync();
+
+        TodayWorkOrdersDto today = await TestApp.SendAsync(new GetTodayWorkOrdersQuery(AsOfUtc: AsOf));
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, today with { InProgressCount = 99 }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, today with { FromUtc = today.FromUtc.AddHours(-8) }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+
+        DelayedOrdersDto delayed = await TestApp.SendAsync(new AnalyzeDelayedOrdersQuery(AsOf));
+        DelayedOrdersDto delayedTampered = delayed with
+        {
+            Orders = delayed.Orders.Select(order => order with { Id = order.Id + 1000 }).ToList()
+        };
+        (await VerifyAsync(ToolNames.AnalyzeDelayedOrders, delayedTampered))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+
+        DefectSummaryDto summary = await TestApp.SendAsync(new GetDefectSummaryQuery(7, AsOf.AddDays(1)));
+        (await VerifyAsync(ToolNames.GetDefectSummary, summary with { TotalQuantity = summary.TotalQuantity + 1 }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+    }
+
+    [Test]
     public async Task ExecutedSqlIsCapturedForDebugInfo()
     {
         using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();

@@ -1,20 +1,26 @@
+using Lingban.Application.Common.Interfaces;
 using Lingban.Application.Equipment.Queries;
 using Lingban.Application.Production.Queries;
 using Lingban.Application.Quality.Queries;
+using Lingban.Domain.Services;
 
 namespace Lingban.Application.Common.Verification;
 
 /// <summary>
-/// 校验规则:用 IVerificationQueryService 的原生 SQL 路径复核工具结果的关键数字。
-/// 数值容差:计数精确相等;分钟数容差 0.01。
+/// 校验规则:用 IVerificationQueryService 的原生 SQL 路径复核工具结果。
+/// 反"自验自证":时间范围不信任工具 DTO,规则从工厂日历独立重建;
+/// 覆盖面不止总数,含状态分布 / 明细 ID 集合 / 公式一致性。
 /// </summary>
 public class TodayWorkOrdersVerificationRule : IVerificationRule
 {
     private readonly IVerificationQueryService _queries;
+    private readonly IFactoryCalendarProvider _calendarProvider;
 
-    public TodayWorkOrdersVerificationRule(IVerificationQueryService queries)
+    public TodayWorkOrdersVerificationRule(
+        IVerificationQueryService queries, IFactoryCalendarProvider calendarProvider)
     {
         _queries = queries;
+        _calendarProvider = calendarProvider;
     }
 
     public bool Supports(string toolName) => toolName == ToolNames.GetTodayWorkOrders;
@@ -26,10 +32,20 @@ public class TodayWorkOrdersVerificationRule : IVerificationRule
             return Mismatched(nameof(TodayWorkOrdersDto));
         }
 
-        int actual = await _queries.CountWorkOrdersStartedBetweenAsync(dto.FromUtc, dto.ToUtc, cancellationToken);
+        // 独立重建生产日边界:工具若退化成 UTC 划天并输出自洽的假边界,这里会抓到。
+        ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
+        var (fromUtc, toUtc) = calendar.GetProductionDayBoundsUtc(dto.ProductionDate);
+
+        TodayWorkOrderCounts actual = await _queries.CountTodayWorkOrdersAsync(
+            fromUtc, toUtc, dto.ProductionLineId, cancellationToken);
+
         return VerificationResult.FromChecks(new[]
         {
-            new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actual.ToString(), dto.TotalCount == actual)
+            new VerificationCheck("FromUtc", dto.FromUtc.ToString("O"), fromUtc.ToString("O"), dto.FromUtc == fromUtc),
+            new VerificationCheck("ToUtc", dto.ToUtc.ToString("O"), toUtc.ToString("O"), dto.ToUtc == toUtc),
+            new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actual.Total.ToString(), dto.TotalCount == actual.Total),
+            new VerificationCheck("InProgressCount", dto.InProgressCount.ToString(), actual.InProgress.ToString(), dto.InProgressCount == actual.InProgress),
+            new VerificationCheck("CompletedCount", dto.CompletedCount.ToString(), actual.Completed.ToString(), dto.CompletedCount == actual.Completed)
         });
     }
 
@@ -58,10 +74,14 @@ public class DelayedOrdersVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.Mismatched(nameof(DelayedOrdersDto));
         }
 
-        int actual = await _queries.CountDelayedWorkOrdersAsync(dto.AsOfUtc, cancellationToken);
+        IReadOnlyList<int> actualIds = await _queries.GetDelayedWorkOrderIdsAsync(dto.AsOfUtc, cancellationToken);
+        string claimedIds = string.Join(",", dto.Orders.Select(order => order.Id).OrderBy(id => id));
+        string actualIdList = string.Join(",", actualIds);
+
         return VerificationResult.FromChecks(new[]
         {
-            new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actual.ToString(), dto.TotalCount == actual)
+            new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actualIds.Count.ToString(), dto.TotalCount == actualIds.Count),
+            new VerificationCheck("OrderIds", claimedIds, actualIdList, claimedIds == actualIdList)
         });
     }
 }
@@ -84,10 +104,13 @@ public class DefectSummaryVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.Mismatched(nameof(DefectSummaryDto));
         }
 
-        decimal actual = await _queries.SumDefectQuantitySinceAsync(dto.SinceUtc, cancellationToken);
+        decimal actual = await _queries.SumDefectQuantityBetweenAsync(dto.SinceUtc, dto.AsOfUtc, cancellationToken);
+        decimal byTypeSum = dto.ByType.Sum(item => item.Quantity);
+
         return VerificationResult.FromChecks(new[]
         {
-            new VerificationCheck("TotalQuantity", dto.TotalQuantity.ToString(), actual.ToString(), dto.TotalQuantity == actual)
+            new VerificationCheck("TotalQuantity", dto.TotalQuantity.ToString(), actual.ToString(), dto.TotalQuantity == actual),
+            new VerificationCheck("ByTypeSum", byTypeSum.ToString(), dto.TotalQuantity.ToString(), byTypeSum == dto.TotalQuantity)
         });
     }
 }
@@ -97,10 +120,12 @@ public class OeeVerificationRule : IVerificationRule
     private const double MinuteTolerance = 0.01;
 
     private readonly IVerificationQueryService _queries;
+    private readonly IFactoryCalendarProvider _calendarProvider;
 
-    public OeeVerificationRule(IVerificationQueryService queries)
+    public OeeVerificationRule(IVerificationQueryService queries, IFactoryCalendarProvider calendarProvider)
     {
         _queries = queries;
+        _calendarProvider = calendarProvider;
     }
 
     public bool Supports(string toolName) => toolName == ToolNames.CalculateOee;
@@ -112,30 +137,39 @@ public class OeeVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.Mismatched(nameof(OeeDto));
         }
 
-        // 按班次区间逐段复核停机分钟(独立 SQL 求交),空档停机不计入。
-        double actualDowntime = 0d;
-        foreach (ShiftPeriodDto period in dto.ShiftPeriods)
-        {
-            actualDowntime += await _queries.SumDowntimeMinutesAsync(
-                dto.EquipmentId, period.StartUtc, period.EndUtc, cancellationToken);
-        }
+        // 班次区间从日历独立重建,不信任 DTO 自带的 ShiftPeriods。
+        ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
+        IReadOnlyList<ShiftPeriod> periods = calendar.GetShiftPeriods(dto.ProductionDate);
+        double plannedMinutes = periods.Sum(period => (period.EndUtc - period.StartUtc).TotalMinutes);
 
-        bool downtimeMatches = Math.Abs(actualDowntime - dto.DowntimeMinutes) <= MinuteTolerance;
-        bool availabilityConsistent = dto.PlannedMinutes <= 0 ||
-            Math.Abs(dto.Availability - (dto.PlannedMinutes - dto.DowntimeMinutes) / dto.PlannedMinutes) <= 0.0001;
+        double actualDowntime = await _queries.SumDowntimeUnionMinutesAsync(
+            dto.EquipmentId,
+            periods.Select(period => (period.StartUtc, period.EndUtc)).ToList(),
+            dto.AsOfUtc,
+            cancellationToken);
+
+        // Availability 必须与业务公式(含 Running 下限 0 的钳制)一致。
+        double expectedAvailability = dto.PlannedMinutes > 0
+            ? Math.Max(0d, dto.PlannedMinutes - dto.DowntimeMinutes) / dto.PlannedMinutes
+            : 0d;
 
         return VerificationResult.FromChecks(new[]
         {
             new VerificationCheck(
+                "PlannedMinutes",
+                dto.PlannedMinutes.ToString("0.##"),
+                plannedMinutes.ToString("0.##"),
+                Math.Abs(plannedMinutes - dto.PlannedMinutes) <= MinuteTolerance),
+            new VerificationCheck(
                 "DowntimeMinutes",
                 dto.DowntimeMinutes.ToString("0.##"),
                 actualDowntime.ToString("0.##"),
-                downtimeMatches),
+                Math.Abs(actualDowntime - dto.DowntimeMinutes) <= MinuteTolerance),
             new VerificationCheck(
                 "Availability",
                 dto.Availability.ToString("0.####"),
-                "planned/downtime consistency",
-                availabilityConsistent)
+                expectedAvailability.ToString("0.####"),
+                Math.Abs(dto.Availability - expectedAvailability) <= 0.0001)
         });
     }
 }
