@@ -1,8 +1,12 @@
 ﻿using Lingban.Application.Common.Interfaces;
+using Lingban.Application.Common.Verification;
+using Lingban.Infrastructure.Calendar;
 using Lingban.Infrastructure.Data;
 using Lingban.Infrastructure.Data.Interceptors;
+using Lingban.Infrastructure.Diagnostics;
 using Lingban.Infrastructure.Identity;
 using Lingban.Infrastructure.Tenancy;
+using Lingban.Infrastructure.Verification;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -23,9 +27,20 @@ public static class DependencyInjection
         builder.Services.AddScoped<ISaveChangesInterceptor, AuditableEntityInterceptor>();
         builder.Services.AddScoped<ISaveChangesInterceptor, DispatchDomainEventsInterceptor>();
 
+        builder.Services.AddScoped<IQueryLog, QueryLog>();
+        builder.Services.AddScoped<SqlCaptureInterceptor>();
+        builder.Services.AddScoped<IFactoryCalendarProvider, FactoryCalendarProvider>();
+        builder.Services.AddScoped<IVerificationQueryService, VerificationQueryService>();
+        builder.Services.AddScoped<IFactVerifier, FactVerifier>();
+        builder.Services.AddScoped<IVerificationRule, TodayWorkOrdersVerificationRule>();
+        builder.Services.AddScoped<IVerificationRule, DelayedOrdersVerificationRule>();
+        builder.Services.AddScoped<IVerificationRule, DefectSummaryVerificationRule>();
+        builder.Services.AddScoped<IVerificationRule, OeeVerificationRule>();
+
         builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
         {
             options.AddInterceptors(sp.GetServices<ISaveChangesInterceptor>());
+            options.AddInterceptors(sp.GetRequiredService<SqlCaptureInterceptor>());
             options.UseNpgsql(connectionString);
             options.ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
         });

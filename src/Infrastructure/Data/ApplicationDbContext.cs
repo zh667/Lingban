@@ -4,6 +4,7 @@ using Lingban.Application.Common.Interfaces;
 using Lingban.Domain.Common;
 using Lingban.Domain.Entities;
 using Lingban.Domain.Entities.Calendar;
+using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
 using Lingban.Domain.Entities.Quality;
@@ -57,6 +58,12 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
 
     public DbSet<Shift> Shifts => Set<Shift>();
+
+    public DbSet<Domain.Entities.Equipment.Equipment> Equipment => Set<Domain.Entities.Equipment.Equipment>();
+
+    public DbSet<EquipmentStatusRecord> EquipmentStatusRecords => Set<EquipmentStatusRecord>();
+
+    public DbSet<DowntimeRecord> DowntimeRecords => Set<DowntimeRecord>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

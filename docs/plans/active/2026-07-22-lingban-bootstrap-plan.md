@@ -73,18 +73,24 @@ Codex CLI 审查原始 PR #2 diff,报 7 bug / 7 风险 / 1 建议。逐条核实
 | Identity 用户-租户 membership(#12 后半) | **M4(MCP 鉴权边界)或鉴权接入时** | 出现第二个用户/租户 | 与 MCP 的租户上下文解析是同一件事 |
 | regex 守卫升级 Roslyn analyzer(#11 完整) | 触发式,无固定里程碑 | 守卫被真实绕过一次 | 生长纪律:等真实事故,不预先镀金 |
 
+**还债进度(2026-07-23,M2 主体 PR)**:跨工单环检测、消耗幂等键、OEE 班次区间、Complete 前置校验四条已还,均有回归测试;Todo 移除待 M2 收尾 PR;其余按表内时机执行。
+
 **核实后不改**:Cancel 不回滚消耗(消耗仅限 InProgress、Cancel 仅限开工前,路径互斥,Codex 亦确认);08:00 边界归属正确([start,end) 半开区间)。
 
 ## 里程碑 2:应用服务与工具层(移植 + 适配)
 
 **目标**:从旧仓库 `zh667/Mes-Agent` 移植可用资产,按新领域模型适配,消灭旧项目的"造假点"。
 
-- [ ] 移植四组工具(生产/质量/OEE/知识库)与对应服务,适配新实体;OEE 与"今日工单"改走工厂日历。
-- [ ] 移植 FactVerifier 框架;**校验查询走独立代码路径**(独立的 VerificationQueryService,禁止复用工具同一查询)。
-- [ ] DebugInfo 的 SQL 改由 EF Core 拦截器捕获真实语句,删除一切手写 SQL 字符串。
-- [ ] 移植 i18n 双语目录与 DeviceSimulator(模拟器数据打来源标记)。
+- [x] 写路径命令(创建/下达/开工/取消/消耗/报工/产出/完工)——三条 M1 债的落点:幂等键(EventId + 过滤唯一索引)、跨工单环检测(谱系祖先遍历)、完工前置校验(有消耗、有产出、产出=报工)。
+- [x] 工具组重写为 Application 查询(移植思路、不搬旧病):GetTodayWorkOrders(班次切分生产日)、AnalyzeDelayedOrders、GetDefectSummary、CalculateOee。
+- [x] CalculateOee 计划时间用班次区间集合(债 #9 还清);Performance/Quality 产线级归因并在 Attribution 字段如实标注,数据不足时为 null 不硬凑。
+- [x] FactVerifier 框架重写:规则经 VerificationQueryService(原生 SQL,显式租户条件)复核,与工具 LINQ 管道零共享;篡改结果被独立路径抓出的测试。
+- [x] SqlCaptureInterceptor + IQueryLog:真实执行的 SQL 进作用域日志,供 M3 debug 面板使用;禁止手写 SQL 字符串。
+- [x] Equipment / EquipmentStatusRecord / DowntimeRecord 实体(M1 推迟项),采集事实带 DataSource 来源标记(领域铁律 #5)。
+- [ ] **M2 收尾(下一个 PR)**:DeviceSimulator 移植(写入打 Simulated 标记)+ Todo 模板业务移除。
+- 调整:知识库工具组推迟到 M5(向量基建在那里,现在移植是空壳);i18n 双语目录推迟到 M6(当前无用户可见界面文案,工具 DTO 是结构化数据)。
 
-**验收**:每个工具有单元测试 + 对应 VerificationRule;`dotnet test` 全绿;grep 不到手写的假 SQL。
+**验收**:每个工具查询有功能测试 + 对应 VerificationRule 且测试含"篡改被抓"路径;`dotnet test` 全绿;grep 不到手写的假 SQL。当前 70/70 绿(收尾两项待办)。
 
 ## 里程碑 3:真 Agent 循环(装第二颗心脏)
 

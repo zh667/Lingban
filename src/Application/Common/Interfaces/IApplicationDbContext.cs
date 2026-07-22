@@ -1,5 +1,6 @@
 using Lingban.Domain.Entities;
 using Lingban.Domain.Entities.Calendar;
+using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
 using Lingban.Domain.Entities.Quality;
@@ -39,6 +40,12 @@ public interface IApplicationDbContext
     DbSet<QualityInspection> QualityInspections { get; }
 
     DbSet<Shift> Shifts { get; }
+
+    DbSet<Domain.Entities.Equipment.Equipment> Equipment { get; }
+
+    DbSet<EquipmentStatusRecord> EquipmentStatusRecords { get; }
+
+    DbSet<DowntimeRecord> DowntimeRecords { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

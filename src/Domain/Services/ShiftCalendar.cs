@@ -111,7 +111,32 @@ public class ShiftCalendar
         return DateOnly.FromDateTime(local.DateTime);
     }
 
-    /// <summary>某生产日的 UTC 起止(首班开始到末班结束),供"今天的工单/OEE"查询划界。</summary>
+    /// <summary>
+    /// 某生产日的全部班次区间(债 #9:OEE 计划时间必须用区间集合求和,
+    /// 不得用首尾包络——包络会把班次间空档算进计划时间)。
+    /// </summary>
+    public IReadOnlyList<ShiftPeriod> GetShiftPeriods(DateOnly productionDate)
+    {
+        return _shifts
+            .Select(shift =>
+            {
+                DateTimeOffset startLocal = ToLocal(productionDate, shift.StartLocalTime);
+                DateTimeOffset endLocal = shift.CrossesMidnight
+                    ? ToLocal(productionDate.AddDays(1), shift.EndLocalTime)
+                    : ToLocal(productionDate, shift.EndLocalTime);
+                return new ShiftPeriod(shift.Code, productionDate, startLocal.ToUniversalTime(), endLocal.ToUniversalTime());
+            })
+            .OrderBy(period => period.StartUtc)
+            .ToList();
+    }
+
+    /// <summary>某生产日的计划生产分钟数(班次时长之和,不含空档)。</summary>
+    public double GetPlannedMinutes(DateOnly productionDate)
+    {
+        return GetShiftPeriods(productionDate).Sum(period => (period.EndUtc - period.StartUtc).TotalMinutes);
+    }
+
+    /// <summary>某生产日的 UTC 起止(首班开始到末班结束)。注意:这是包络,含班次间空档,只用于粗划界,OEE 禁用。</summary>
     public (DateTimeOffset StartUtc, DateTimeOffset EndUtc) GetProductionDayBoundsUtc(DateOnly productionDate)
     {
         DateTimeOffset start = _shifts
