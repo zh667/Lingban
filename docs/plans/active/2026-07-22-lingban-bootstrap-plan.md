@@ -1,0 +1,102 @@
+# Lingban 建设规划(Bootstrap Plan)
+
+创建:2026-07-22
+依据:知识库《MES Agent 另起炉灶方案:基座选型、模板评审与 skills 清单》
+状态:进行中
+说明:按里程碑推进,不做日历排期;每个里程碑有明确验收标准,验收通过才进下一个。
+顺序有讲究——领域心脏先于 Agent,Agent 先于界面;每个里程碑结束时仓库都处于可构建、测试全绿的状态。
+
+---
+
+## 里程碑 0:仓库引导
+
+**目标**:空仓库 → 可构建的骨架。
+
+- [ ] `dotnet new install Clean.Architecture.Solution.Template`,`dotnet new ca-sln` 生成骨架,重命名为 `Lingban.sln` 与 `Lingban.*` 命名空间(Domain / Application / Infrastructure / Web)。
+- [ ] 新增 `src/Lingban.Agent` 类库(Agent 循环与 MCP Server 宿主,后续里程碑填充)。
+- [ ] PostgreSQL 16 + pgvector 的 `docker-compose.yml`;`.env.example`(LLM key 占位,不入库)。
+- [ ] 保留模板自带 GitHub Actions workflow,删除 Azure 部署段;确认 `dotnet build / test / format --verify-no-changes` 本地全绿。
+- [ ] 首次提交推送后,GitHub Settings:main 分支保护(required checks 绑 CI)+ secret scanning push protection(对照知识库《GitHub 新仓库质量与安全配置清单》)。
+- [ ] 回填 AGENTS.md 第 2 节的真实命令与 CI 等价检查。
+
+**验收**:克隆仓库 → `docker compose up -d db` → `dotnet build && dotnet test` 全绿;CI 在 PR 上跑通;直推 main 被拒。
+
+## 里程碑 1:领域心脏(MES 铁律落地,趁没有代码债)
+
+**目标**:把旧项目缺的两颗心脏之一(物料)和全部领域铁律建成 Domain 层,schema 参考 qcadoo MES 与 Odoo mrp(抄结构不抄代码)。
+
+- [ ] 实体:Product、BomLine、**MaterialLot(物料批次)**、**MaterialConsumption(消耗记录,lot→工单→成品 lot 的谱系链)**、WorkOrder、WorkOrderOperation、ProcessRoute/ProcessStep、Equipment、QualityInspection、DefectRecord。
+- [ ] **WorkOrder 状态机**:转换只走领域方法(`Release()`、`Start()`、`Complete()`…),非法转换抛领域异常;禁止外部直接赋值 Status。
+- [ ] **FactoryCalendar + Shift(工厂日历与班次)**:统一"今天/本班次"切分服务;存储一律 UTC,业务切分按工厂时区与班次;全库禁用 `DateTime.UtcNow.Date` 划天(加架构测试或 analyzer 机械保证)。
+- [ ] 数量闭环:计划/完工/合格/报废/返工分开记录;超产不截断,作为可查询信号。
+- [ ] EF Core 配置与首个迁移;种子数据(含跨批次消耗的谱系样例)。
+
+**验收**(全部是测试):① 正向追溯——给定来料批次,列出流入的全部成品批次;② 反向追溯——给定成品批次,列出全部来料批次(召回场景);③ 非法状态转换抛异常;④ 班次切分在东八区工厂 07:59/08:01 两个时刻归属正确。
+
+## 里程碑 2:应用服务与工具层(移植 + 适配)
+
+**目标**:从旧仓库 `zh667/Mes-Agent` 移植可用资产,按新领域模型适配,消灭旧项目的"造假点"。
+
+- [ ] 移植四组工具(生产/质量/OEE/知识库)与对应服务,适配新实体;OEE 与"今日工单"改走工厂日历。
+- [ ] 移植 FactVerifier 框架;**校验查询走独立代码路径**(独立的 VerificationQueryService,禁止复用工具同一查询)。
+- [ ] DebugInfo 的 SQL 改由 EF Core 拦截器捕获真实语句,删除一切手写 SQL 字符串。
+- [ ] 移植 i18n 双语目录与 DeviceSimulator(模拟器数据打来源标记)。
+
+**验收**:每个工具有单元测试 + 对应 VerificationRule;`dotnet test` 全绿;grep 不到手写的假 SQL。
+
+## 里程碑 3:真 Agent 循环(装第二颗心脏)
+
+**目标**:LLM 驱动的工具编排,替代旧项目的关键词 if-else。
+
+- [ ] 接入 Microsoft Agent Framework(`Microsoft.Agents.AI`),注册全部工具(Description 即 function schema);模型商可配置(Claude 优先)。
+- [ ] 删除"模式由用户选"的设计:LLM 自主选择工具,AgentMode 降级为可选提示。
+- [ ] SSE 透传模型真实 token 流;工具结果 → FactVerifier → 校验结论随消息返回并持久化。
+- [ ] 会话上下文窗口真实喂给 LLM(多轮对话)。
+- [ ] 写操作类工具走 Human-in-the-loop 确认;只读工具自动执行。
+- [ ] **最小 eval 集**:每个工具至少 1 条"中文自然语言问题 → 应选中该工具且数字经校验"的用例;eval 命令写进 AGENTS.md 第 2 节。
+
+**验收**:"3号线今天延期的工单有哪些?为什么?"→ LLM 正确选择工具(不把 3 当设备 ID)→ 校验通过 → 真流式中文回答;eval 全绿。
+
+## 里程碑 4:MCP Server(单一实现,两处暴露)
+
+**目标**:Lingban 成为 AI 生态里的制造业数据源。
+
+- [ ] 先调用 `mcp-builder` skill,再动工;用官方 MCP C# SDK 把工具集暴露为 `lingban-mes` Server(stdio + HTTP 两种传输)。
+- [ ] 工具实现与进程内 Agent 循环共用同一层,禁止两套逻辑。
+- [ ] 鉴权与租户上下文在 MCP 边界处理。
+
+**验收**:本机 Claude Code 配置 `lingban-mes` 后,直接问"今天有几张工单"能得到经校验的真实数据;AGENTS.md 第 10 节登记工具清单。
+
+## 里程碑 5:知识库与真 RAG
+
+**目标**:SOP/维护手册问答,生成与引用都是真的。
+
+- [ ] docx/pdf 解析入库(docx skill 造测试语料)、分块、OpenAI/可配置 embedding、pgvector 检索(复用旧仓库 PgVectorStore 思路)。
+- [ ] 生成 = LLM 基于检索上下文作答(删除旧项目"top-1 截断拼前缀"的假生成);引用标注 + KnowledgeCitation 校验规则(引用必须真实存在于检索结果)。
+
+**验收**:上传一份 SOP → 提问 → 带真实引用的回答;引用校验规则测试通过;无上下文时明确说"知识库没有",不编。
+
+## 里程碑 6:操作台(最后做界面)
+
+**目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互)、工单/OEE 看板。
+
+- [ ] OpenAPI 代码生成打通(前端零手写响应类型);en-US/zh-CN 双目录。
+- [ ] 用 `webapp-testing` skill(Playwright)做关键路径 E2E:登录 → 提问 → 流式回答 → 校验标识可见。
+
+**验收**:E2E 全绿;`pnpm lint / typecheck / test / build` 进 CI。
+
+---
+
+## 里程碑之外的持续事项
+
+- 每个里程碑合并前:`git diff` 通读、AGENTS.md 相关小节同步更新(文档与代码同一改动)。
+- 出现第二次同类错误 → 按 AGENTS.md 第 13 节固化为 lint/CI/测试或加一行规则。
+- `mes-domain` 项目级 skill(ISA-95 词汇、班次/谱系不变量)在里程碑 1 完成后用 `skill-creator` 沉淀,放 `.claude/skills/`。
+
+## 决策记录
+
+| 日期 | 决策 | 理由 |
+| --- | --- | --- |
+| 2026-07-22 | 项目定名 Lingban(领班) | 身份而非类别;全球无撞车;隐喻=车间里全知的执行者 |
+| 2026-07-22 | 基座:ca-sln + Microsoft Agent Framework + MCP C# SDK;不用 ABP、不用 BotSharp | 见知识库《MES Agent 另起炉灶方案》 |
+| 2026-07-22 | 领域心脏(物料/状态机/日历)先于 Agent 循环 | 旧项目教训:基建齐全但两颗心脏缺失;趁零代码债先立铁律 |
