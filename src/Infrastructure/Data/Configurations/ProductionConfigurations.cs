@@ -53,6 +53,8 @@ public class ProcessStepConfiguration : IEntityTypeConfiguration<ProcessStep>
             .WithMany()
             .HasForeignKey(step => step.WorkstationId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasIndex(step => new { step.TenantId, step.ProcessRouteId, step.Sequence }).IsUnique();
     }
 }
 
@@ -104,5 +106,7 @@ public class WorkOrderOperationConfiguration : IEntityTypeConfiguration<WorkOrde
             .WithMany()
             .HasForeignKey(operation => operation.WorkstationId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasIndex(operation => new { operation.TenantId, operation.WorkOrderId, operation.Sequence }).IsUnique();
     }
 }

@@ -25,7 +25,7 @@
 - 开发(整套,Aspire dashboard,需 Docker):`dotnet run --project src/AppHost`
 - 格式检查:`dotnet format Lingban.slnx --verify-no-changes --no-restore`
 - 构建:`dotnet build Lingban.slnx --no-restore`
-- 单元测试(无 Docker 可跑):`dotnet test tests/Domain.UnitTests tests/Application.UnitTests --no-build`
+- 单元测试(无 Docker 可跑,分开执行,`dotnet test` 不接受多项目参数):`dotnet test tests/Domain.UnitTests --no-build` 与 `dotnet test tests/Application.UnitTests --no-build`
 - 全量测试(功能/集成,需 Docker):`dotnet test Lingban.slnx --no-build`
 - CI 等价检查:restore → build → format verify → test(`.github/workflows/ci.yml`,与上述命令一致)
 - Agent eval:无(eval 基建建成后更新此行,并同步第 11 节)

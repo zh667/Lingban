@@ -84,6 +84,31 @@ public class ShiftCalendarTests
     }
 
     [Test]
+    public void OverlappingShiftsAreRejected()
+    {
+        // Codex 审查发现#9 的回归钉:重叠班次让时刻归属取决于集合顺序,构造时拒绝。
+        Should.Throw<ArgumentException>(() => new ShiftCalendar(
+            Shanghai,
+            new[]
+            {
+                new Shift { Code = "A", StartLocalTime = new TimeOnly(8, 0), EndLocalTime = new TimeOnly(16, 0) },
+                new Shift { Code = "B", StartLocalTime = new TimeOnly(12, 0), EndLocalTime = new TimeOnly(20, 0) }
+            }));
+
+        // 夜班尾部越过次日白班头部同样是重叠。
+        Should.Throw<ArgumentException>(() => new ShiftCalendar(
+            Shanghai,
+            new[]
+            {
+                new Shift { Code = "DAY", StartLocalTime = new TimeOnly(7, 0), EndLocalTime = new TimeOnly(19, 0) },
+                new Shift { Code = "NIGHT", StartLocalTime = new TimeOnly(20, 0), EndLocalTime = new TimeOnly(8, 0) }
+            }));
+
+        // 首尾相接(20:00 交班)是合法的。
+        Should.NotThrow(() => TwoShiftCalendar());
+    }
+
+    [Test]
     public void RequiresAtLeastOneActiveShift()
     {
         Should.Throw<ArgumentException>(() => new ShiftCalendar(Shanghai, Array.Empty<Shift>()));

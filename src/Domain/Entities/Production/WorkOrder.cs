@@ -87,13 +87,13 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
     public void Start(DateTimeOffset occurredAtUtc)
     {
         Transition(WorkOrderStatus.InProgress, from: WorkOrderStatus.Released);
-        ActualStartUtc = occurredAtUtc;
+        ActualStartUtc = occurredAtUtc.ToUniversalTime();
     }
 
     public void Complete(DateTimeOffset occurredAtUtc)
     {
         Transition(WorkOrderStatus.Completed, from: WorkOrderStatus.InProgress);
-        ActualEndUtc = occurredAtUtc;
+        ActualEndUtc = occurredAtUtc.ToUniversalTime();
     }
 
     public void Cancel()
@@ -121,6 +121,17 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
         QualifiedQuantity += qualified;
         ScrapQuantity += scrap;
         ReworkQuantity += rework;
+
+        // 四账不变量:合格+报废+返工是完工的处置分账,不得超过完工总量。
+        if (QualifiedQuantity + ScrapQuantity + ReworkQuantity > CompletedQuantity)
+        {
+            CompletedQuantity -= completed;
+            QualifiedQuantity -= qualified;
+            ScrapQuantity -= scrap;
+            ReworkQuantity -= rework;
+            throw new InvalidOperationException(
+                $"Work order {Code}: qualified + scrap + rework would exceed completed quantity.");
+        }
     }
 
     /// <summary>
@@ -134,6 +145,22 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
         string? recordedBy = null)
     {
         EnsureInProgress("record material consumption");
+
+        // 禁止自耗环:工单不能消耗自己产出的批次。
+        if (ReferenceEquals(lot.ProducedByWorkOrder, this) ||
+            (lot.ProducedByWorkOrderId is int producerId && Id != 0 && producerId == Id))
+        {
+            throw new InvalidOperationException(
+                $"Work order {Code} cannot consume its own output lot {lot.LotNumber}.");
+        }
+
+        // 租户一致性(两边都已盖章时校验;未盖章的由基础设施层保证)。
+        if (!string.IsNullOrEmpty(TenantId) && !string.IsNullOrEmpty(lot.TenantId) && TenantId != lot.TenantId)
+        {
+            throw new InvalidOperationException(
+                $"Work order {Code} and lot {lot.LotNumber} belong to different tenants.");
+        }
+
         lot.Consume(quantity);
 
         var consumption = new MaterialConsumption
@@ -145,7 +172,7 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
             Quantity = quantity,
             UnitOfMeasure = lot.UnitOfMeasure,
             WorkstationId = workstationId,
-            RecordedAtUtc = recordedAtUtc,
+            RecordedAtUtc = recordedAtUtc.ToUniversalTime(),
             RecordedBy = recordedBy
         };
 
@@ -164,8 +191,7 @@ public class WorkOrder : BaseAuditableEntity, ITenantEntity
             quantity,
             UnitOfMeasure,
             producedAtUtc,
-            supplierLotNumber: null,
-            producedByWorkOrderId: null);
+            supplierLotNumber: null);
         lot.ProducedByWorkOrder = this;
         OutputLots.Add(lot);
         return lot;

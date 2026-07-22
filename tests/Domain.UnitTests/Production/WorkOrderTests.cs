@@ -125,6 +125,69 @@ public class WorkOrderTests
     }
 
     [Test]
+    public void SelfConsumptionIsRejected()
+    {
+        // Codex 审查发现#3 的回归钉:工单不能消耗自己产出的批次(自耗环)。
+        var order = InProgressOrder();
+        var output = order.ProduceLot("L-SELF", 10m, T0);
+
+        Should.Throw<InvalidOperationException>(
+            () => order.RecordConsumption(output, 1m, 7, T0));
+    }
+
+    [Test]
+    public void CrossTenantConsumptionIsRejected()
+    {
+        var order = InProgressOrder();
+        order.TenantId = "tenant-a";
+        var lot = MaterialLot.Create("L-XT", 2, 10m, "PCS", T0);
+        lot.TenantId = "tenant-b";
+
+        Should.Throw<InvalidOperationException>(
+            () => order.RecordConsumption(lot, 1m, 7, T0));
+    }
+
+    [Test]
+    public void DispositionsCannotExceedCompleted()
+    {
+        // Codex 审查发现#7 的回归钉:合格+报废+返工不得超过完工;违规调用整体回滚。
+        var order = InProgressOrder();
+
+        Should.Throw<InvalidOperationException>(
+            () => order.ReportProduction(completed: 10m, qualified: 100m, scrap: 0m, rework: 0m));
+
+        order.CompletedQuantity.ShouldBe(0m);
+        order.QualifiedQuantity.ShouldBe(0m);
+
+        order.ReportProduction(10m, 8m, 1m, 1m);
+        Should.Throw<InvalidOperationException>(
+            () => order.ReportProduction(0m, 1m, 0m, 0m));
+        order.QualifiedQuantity.ShouldBe(8m);
+    }
+
+    [Test]
+    public void DomainTimestampsAreNormalizedToUtc()
+    {
+        // Codex 审查发现#14 的回归钉:*Utc 字段必须真是 UTC,+08:00 输入被归一。
+        var plusEight = new DateTimeOffset(2026, 7, 22, 9, 0, 0, TimeSpan.FromHours(8));
+
+        var order = NewOrder();
+        order.Release();
+        order.Start(plusEight);
+        order.ActualStartUtc!.Value.Offset.ShouldBe(TimeSpan.Zero);
+        order.ActualStartUtc.Value.ShouldBe(plusEight);
+
+        var lot = MaterialLot.Create("L-UTC", 2, 10m, "PCS", plusEight);
+        lot.ReceivedAtUtc.Offset.ShouldBe(TimeSpan.Zero);
+
+        var consumption = order.RecordConsumption(lot, 1m, 7, plusEight);
+        consumption.RecordedAtUtc.Offset.ShouldBe(TimeSpan.Zero);
+
+        order.Complete(plusEight.AddHours(1));
+        order.ActualEndUtc!.Value.Offset.ShouldBe(TimeSpan.Zero);
+    }
+
+    [Test]
     public void ProducedLotIsLinkedToWorkOrder()
     {
         var order = InProgressOrder();

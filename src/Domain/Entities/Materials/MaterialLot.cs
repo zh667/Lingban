@@ -27,10 +27,10 @@ public class MaterialLot : BaseAuditableEntity, ITenantEntity
     /// <summary>采购批次的供应商批号;自产批次为 null。</summary>
     public string? SupplierLotNumber { get; set; }
 
-    /// <summary>产出本批次的工单;采购批次为 null。谱系的"向上"边。</summary>
-    public int? ProducedByWorkOrderId { get; set; }
+    /// <summary>产出本批次的工单;采购批次为 null。谱系的"向上"边,只能由 WorkOrder.ProduceLot 建立。</summary>
+    public int? ProducedByWorkOrderId { get; private set; }
 
-    public Production.WorkOrder? ProducedByWorkOrder { get; set; }
+    public Production.WorkOrder? ProducedByWorkOrder { get; internal set; }
 
     /// <summary>本批次被消耗的记录。谱系的"向下"边。</summary>
     public ICollection<MaterialConsumption> Consumptions { get; private set; } = new List<MaterialConsumption>();
@@ -41,8 +41,7 @@ public class MaterialLot : BaseAuditableEntity, ITenantEntity
         decimal quantity,
         string unitOfMeasure,
         DateTimeOffset receivedAtUtc,
-        string? supplierLotNumber = null,
-        int? producedByWorkOrderId = null)
+        string? supplierLotNumber = null)
     {
         if (string.IsNullOrWhiteSpace(lotNumber))
         {
@@ -58,9 +57,8 @@ public class MaterialLot : BaseAuditableEntity, ITenantEntity
             InitialQuantity = quantity,
             QuantityOnHand = quantity,
             UnitOfMeasure = unitOfMeasure,
-            ReceivedAtUtc = receivedAtUtc,
-            SupplierLotNumber = supplierLotNumber,
-            ProducedByWorkOrderId = producedByWorkOrderId
+            ReceivedAtUtc = receivedAtUtc.ToUniversalTime(),
+            SupplierLotNumber = supplierLotNumber
         };
     }
 

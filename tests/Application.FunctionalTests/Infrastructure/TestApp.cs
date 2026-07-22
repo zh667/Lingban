@@ -113,19 +113,17 @@ public static class TestApp
     }
 
     /// <summary>
-    /// 保存实体图:已有主键的可达实体按 Unchanged 附加,仅无键实体插入。
-    /// 用于聚合根携带已保存关联(如工单消耗已入库的批次)的场景。
+    /// 在同一个 DbContext 作用域内执行多步领域操作并保存——
+    /// 跨聚合的领域方法(如消耗已入库批次)必须在同一变更跟踪器内完成,
+    /// 否则对已有实体的修改不会持久化(Attach 会把有键实体标为 Unchanged)。
     /// </summary>
-    public static async Task AttachGraphAsync<TEntity>(TEntity entity)
-        where TEntity : class
+    public static async Task ExecuteDbContextAsync(Func<ApplicationDbContext, Task> action)
     {
         using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
 
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        context.Attach(entity);
-
-        await context.SaveChangesAsync();
+        await action(context);
     }
 
     public static async Task<int> CountAsync<TEntity>() where TEntity : class

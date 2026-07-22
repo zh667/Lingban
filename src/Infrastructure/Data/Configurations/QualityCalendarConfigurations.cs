@@ -29,10 +29,11 @@ public class DefectRecordConfiguration : IEntityTypeConfiguration<DefectRecord>
             .HasForeignKey(record => record.DefectTypeId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // 质量记录是审计证据,禁止随主数据级联清除。
         builder.HasOne(record => record.WorkOrder)
             .WithMany()
             .HasForeignKey(record => record.WorkOrderId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -46,12 +47,12 @@ public class QualityInspectionConfiguration : IEntityTypeConfiguration<QualityIn
         builder.HasOne(inspection => inspection.WorkOrder)
             .WithMany()
             .HasForeignKey(inspection => inspection.WorkOrderId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(inspection => inspection.MaterialLot)
             .WithMany()
             .HasForeignKey(inspection => inspection.MaterialLotId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 
