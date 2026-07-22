@@ -28,5 +28,8 @@ public class MaterialConsumption : BaseAuditableEntity, ITenantEntity
 
     public string? RecordedBy { get; internal set; }
 
+    /// <summary>调用方幂等键:同一事件重放不得二次扣料。数据库有 (TenantId, EventId) 过滤唯一索引兜底。</summary>
+    public Guid? EventId { get; internal set; }
+
     internal MaterialConsumption() { }
 }

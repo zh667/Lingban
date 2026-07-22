@@ -88,6 +88,11 @@ public class MaterialConsumptionConfiguration : IEntityTypeConfiguration<Materia
             .HasForeignKey(consumption => consumption.WorkstationId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // 幂等兜底:同租户下同一事件键只允许一条消耗记录。
+        builder.HasIndex(consumption => new { consumption.TenantId, consumption.EventId })
+            .IsUnique()
+            .HasFilter("\"EventId\" IS NOT NULL");
+
         builder.HasIndex(consumption => new { consumption.TenantId, consumption.MaterialLotId });
         builder.HasIndex(consumption => new { consumption.TenantId, consumption.WorkOrderId });
     }
