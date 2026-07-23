@@ -22,6 +22,30 @@ public class AnswerAuditorCitationTests
         1);
 
     [Test]
+    public void NumberFromVerificationSummaryIsAllowed()
+    {
+        // eval 补验抓出的口径缺口:校验摘要(如 "All 5 checks passed")也是模型看到的工具事实,
+        // 如实转述"5 项检查通过"不得判为无出处数字。
+        var result = new ToolResultEvent(
+            "call-1", ToolNames.GetDefectSummary,
+            new { totalQuantity = 3m },
+            new VerificationResult
+            {
+                Status = VerificationStatus.Verified,
+                Summary = "All 5 checks passed against an independent query path."
+            },
+            Array.Empty<string>(), Array.Empty<string>(), 1);
+
+        var audit = AnswerAuditor.Audit(
+            "最近缺陷共 3 件,数据经独立复核,全部 5 项检查通过。",
+            "最近缺陷情况?",
+            new[] { result },
+            Array.Empty<ToolErrorEvent>());
+        audit.UnverifiedNumbers.ShouldBeEmpty();
+        audit.Passed.ShouldBeTrue();
+    }
+
+    [Test]
     public void ValidCitationPasses()
     {
         var audit = AnswerAuditor.Audit(
