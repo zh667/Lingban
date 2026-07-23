@@ -13,6 +13,8 @@ builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogL
 
 builder.AddApplicationServices();
 builder.AddInfrastructureServices();
+builder.Services.AddSingleton<Lingban.Application.Common.Interfaces.IUser>(
+    new Lingban.Application.Common.Models.ServiceUser("mcp-local"));
 builder.Services.AddScoped<IAgentInvocationClock, AgentInvocationClock>();
 builder.Services.AddScoped<MesToolExecutor>();
 

@@ -193,6 +193,18 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6);SSE 并发流上限(M6);stdio 只读数据库角色(部署期)。
 
+## M4 审查跟进(Codex 六审/增量复审,2026-07-23)
+
+六审实测发现合并阻断:stdio 宿主缺 IUser 注册,四工具真实协议调用全灭(直接方法测试自证的恶果);判定五审 11 条中 5 已修 4 部分 1 未修。全部处置:
+- #1(阻断)→ ServiceUser 进程身份注册进 McpServer 与 DeviceSimulator(后者同病,tick 曾无声吞错);**进程级协议冒烟测试**(真启动 stdio 宿主:握手→列表→成功调用含 Verified→坏日期 isError=true),自证时代结束。
+- #2(阻断)→ FactVerifier 显式重抛请求取消,不再把取消解释成 Failed。
+- #3 → 校验异常收敛为稳定错误码(VERIFICATION_EXECUTION_ERROR),不泄表名列名;契约:VerificationStatus.Failed 在 MCP 层 IsError=true。
+- #4 → 移除 TargetSite 命名空间嗅探:仅白名单类型(Validation/NotFound)原文透出,IOE 一律稳定码;写工具接入时以 DomainRuleException 类型白名单透出(债)。
+- #5 → GlobalLimiter 用户级总预算 80/分钟兜住策略叠加;Retry-After 读取 lease 真实剩余窗口。
+- #6 → FK 守卫白名单精化:键含 FK 属性、强制可空+SetNull、恰好命中一次、未消费项报警。
+- #7 → 迭代预算语义纠偏(注释)+ AnswerAuditor 拒绝空答案;严格按调用计数的预算随写工具落地(债)。
+- 次要留债:Logging/Performance behaviour 的 Identity 查询不接受取消令牌(接口签名改动,随鉴权深化)。
+
 ## 里程碑 5:知识库与真 RAG
 
 **目标**:SOP/维护手册问答,生成与引用都是真的。

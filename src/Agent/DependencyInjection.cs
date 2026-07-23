@@ -46,7 +46,9 @@ public static class AgentDependencyInjection
                 .UseFunctionInvocation(configure: client =>
                 {
                     client.AllowConcurrentInvocation = false;
-                    client.MaximumIterationsPerRequest = 8; // 单轮工具调用预算,防失控循环烧库烧钱
+                    // 注意语义(六审 #7):8 限制的是"模型↔工具往返轮数",单轮响应仍可含多个串行工具调用;
+                    // 到限后 SDK 摘除函数做最终请求。空答案由 AnswerAuditor 拒绝。严格按调用计数的预算随写工具落地(债)。
+                    client.MaximumIterationsPerRequest = 8;
                 })
                 .Build(provider);
         });

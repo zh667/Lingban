@@ -74,6 +74,9 @@ public sealed class LingbanMesTools
             };
         }
 
+        // 契约:VerificationStatus.Failed(校验路径执行失败,数据未经复核)在协议层即 IsError。
+        bool verificationFailed = execution.Verification!.Status
+            == Lingban.Application.Common.Verification.VerificationStatus.Failed;
         string payload = JsonSerializer.Serialize(new
         {
             asOfUtc = clock.AsOfUtc,
@@ -84,6 +87,6 @@ public sealed class LingbanMesTools
             elapsedMs = execution.ElapsedMs
         }, JsonOptions);
 
-        return new CallToolResult { Content = [new TextContentBlock { Text = payload }] };
+        return new CallToolResult { IsError = verificationFailed, Content = [new TextContentBlock { Text = payload }] };
     }
 }

@@ -32,10 +32,23 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = async (rejectedContext, token) =>
     {
-        rejectedContext.HttpContext.Response.Headers.RetryAfter = "60";
+        int retryAfter = rejectedContext.Lease.TryGetMetadata(
+                System.Threading.RateLimiting.MetadataName.RetryAfter, out TimeSpan value)
+            ? (int)Math.Ceiling(value.TotalSeconds)
+            : 60;
+        rejectedContext.HttpContext.Response.Headers.RetryAfter = retryAfter.ToString();
         await rejectedContext.HttpContext.Response.WriteAsJsonAsync(
-            new { error = "RATE_LIMITED", retryAfterSeconds = 60 }, token);
+            new { error = "RATE_LIMITED", retryAfterSeconds = retryAfter }, token);
     };
+    // 六审 #5:聊天与 MCP 的策略不共享预算,叠加可达 70/min——全局用户级预算兜底。
+    options.GlobalLimiter = System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(
+        httpContext => System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            RatePartition(httpContext),
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromMinutes(1),
+                PermitLimit = 80
+            }));
     options.AddPolicy("agent-chat", httpContext =>
         System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
             RatePartition(httpContext),

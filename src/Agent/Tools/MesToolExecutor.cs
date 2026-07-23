@@ -117,19 +117,20 @@ public class MesToolExecutor
         {
             result = await execute(cancellationToken);
         }
-        catch (Exception exception) when (
-            exception is Lingban.Application.Common.Exceptions.ValidationException
-                or Ardalis.GuardClauses.NotFoundException
-                or InvalidOperationException)
+        catch (Lingban.Application.Common.Exceptions.ValidationException exception)
         {
-            // 领域/校验层抛出的才原文透出;来源不明的 InvalidOperationException(如 EF 内部)给稳定错误码。
-            bool domainOrigin = exception.TargetSite?.DeclaringType?.Namespace?.StartsWith("Lingban", StringComparison.Ordinal) == true
-                || exception is Lingban.Application.Common.Exceptions.ValidationException
-                or Ardalis.GuardClauses.NotFoundException;
+            // 白名单类型才原文透出(六审 #4:不以命名空间嗅探猜语义)。
+            return ErrorExecution(new MesToolError(toolName, exception.Message, Recoverable: true));
+        }
+        catch (Ardalis.GuardClauses.NotFoundException exception)
+        {
+            return ErrorExecution(new MesToolError(toolName, exception.Message, Recoverable: true));
+        }
+        catch (InvalidOperationException)
+        {
+            // 读工具不应命中业务 IOE;写工具接入时以 DomainRuleException 白名单类型透出(债)。
             return ErrorExecution(new MesToolError(
-                toolName,
-                domainOrigin ? exception.Message : "内部错误(INTERNAL_QUERY_ERROR),请调整参数或稍后重试。",
-                Recoverable: domainOrigin));
+                toolName, "内部错误(INTERNAL_QUERY_ERROR),请调整参数或稍后重试。", Recoverable: false));
         }
 
         int verifyCheckpoint = _queryLog.Checkpoint();
