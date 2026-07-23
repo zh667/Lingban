@@ -1,4 +1,3 @@
-using Lingban.Domain.Entities;
 using Lingban.Domain.Entities.Calendar;
 using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
@@ -9,10 +8,6 @@ namespace Lingban.Application.Common.Interfaces;
 
 public interface IApplicationDbContext
 {
-    DbSet<TodoList> TodoLists { get; }
-
-    DbSet<TodoItem> TodoItems { get; }
-
     DbSet<Product> Products { get; }
 
     DbSet<BomLine> BomLines { get; }

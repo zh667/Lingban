@@ -19,4 +19,8 @@ var web = builder.AddProject<Projects.Web>(Services.WebApi)
         url.Url = "/scalar";
     });
 
+builder.AddProject<Projects.DeviceSimulator>("simulator")
+    .WithReference(databaseServer)
+    .WaitFor(web);
+
 builder.Build().Run();
