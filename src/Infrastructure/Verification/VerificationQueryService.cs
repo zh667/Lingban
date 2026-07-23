@@ -159,7 +159,7 @@ public class VerificationQueryService : IVerificationQueryService
     {
         string tenant = _tenantContext.TenantId;
         List<PendingActionRow> rows = await _context.Database.SqlQuery<PendingActionRow>($"""
-            SELECT "OwnerUserId", "ActionType", "Status", "PayloadJson"
+            SELECT "OwnerUserId", "ActionType", "Status", "PayloadJson", "Summary"
             FROM "PendingActions"
             WHERE "TenantId" = {tenant} AND "Id" = {actionId}
             """).ToListAsync(cancellationToken);

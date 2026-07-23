@@ -22,8 +22,9 @@ type Audit = { passed: boolean; unverifiedNumbers: string[]; nonVerifiedTools: s
 type Turn = {
   role: "user" | "assistant"; text: string;
   tools: ToolResult[]; hitl: Hitl[]; audit?: Audit; error?: string;
-  // 重试必须复用同一幂等键(八审 #2):键与原始提问一起存在失败回合上。
-  retryMessage?: string; retryKey?: string;
+  // 语义澄清(九审 #1):幂等键只挡"同一次提交"的传输级重复(双击/代理重发);
+  // 服务端对同键一律拒绝,所以"重发"是带新键的新一次提交,不是断点续传。
+  retryMessage?: string;
 };
 
 // SSE 按行解析(八审 #7):支持 LF/CRLF、多行 data(按规范以 \n 拼接)、注释行与跨 chunk 残帧。
@@ -99,7 +100,7 @@ export default function Home() {
         } satisfies ChatRequest),
       });
       if (!res.ok || !res.body) {
-        patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+        patch((x) => ({ ...x, error: m.streamError, retryMessage: message }));
         return;
       }
 
@@ -109,7 +110,11 @@ export default function Home() {
         else if (ev === "tool_result") patch((x) => ({ ...x, tools: [...x.tools, data] }));
         else if (ev === "hitl_pending") patch((x) => ({ ...x, hitl: [...x.hitl, data] }));
         else if (ev === "answer_audit") patch((x) => ({ ...x, audit: data }));
-        else if (ev === "error") { terminal = true; patch((x) => ({ ...x, error: data.message })); }
+        else if (ev === "error") {
+          terminal = true;
+          // 服务端错误(含模型流失败)同样给重发入口(九审 #1 场景一)。
+          patch((x) => ({ ...x, error: data.message, retryMessage: message }));
+        }
         else if (ev === "done") { terminal = true; conversationId.current = data.conversationId; }
       };
 
@@ -129,10 +134,10 @@ export default function Home() {
       parseSseLines([...buffer.split("\n"), ""], pending, handle);
 
       if (!terminal) {
-        patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+        patch((x) => ({ ...x, error: m.streamError, retryMessage: message }));
       }
     } catch {
-      patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+      patch((x) => ({ ...x, error: m.streamError, retryMessage: message }));
     } finally {
       setBusy(false);
     }
@@ -151,12 +156,13 @@ export default function Home() {
 
   const retry = async (turnIndex: number) => {
     const failed = turns[turnIndex];
-    if (busy || !failed.retryMessage || !failed.retryKey) return;
-    const { retryMessage, retryKey } = failed;
-    // 复位失败回合,重新流入同一气泡;键不变,后端幂等索引兜底。
+    if (busy || !failed.retryMessage) return;
+    const { retryMessage } = failed;
+    // 重发 = 新键的新一次提交(九审 #1):服务端对同键一律拒绝,复用旧键只会得到 DUPLICATE。
+    // 幂等结果重放(同键返回既有结果)记为债,触发=需要断点续传时。
     setTurns((prev) => prev.map((turn, i) =>
       i !== turnIndex ? turn : { role: "assistant", text: "", tools: [], hitl: [] }));
-    await streamTurn(retryMessage, retryKey);
+    await streamTurn(retryMessage, crypto.randomUUID());
   };
 
   const confirm = async (turnIndex: number, hitlIndex: number, approve: boolean) => {

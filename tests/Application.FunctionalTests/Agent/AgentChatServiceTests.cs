@@ -377,6 +377,94 @@ public class AgentChatServiceTests : TestBase
     }
 
     [Test]
+    public async Task ConcurrentFirstRequestsWithSameKeyLeaveNoOrphanConversation()
+    {
+        // 九审 #4 回归钉:并发同键首请求,输家整体回滚——恰一个会话、一条用户消息、一次完成。
+        await SeedFactoryAsync();
+        var key = Guid.NewGuid();
+
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(async () =>
+        {
+            using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+            AgentChatService service = CreateService(scope, new ScriptedChatClient(null, new[] { "答。" }));
+            var events = new List<AgentEvent>();
+            await foreach (AgentEvent e in service.ChatAsync(null, "并发首问", key))
+            {
+                events.Add(e);
+            }
+
+            return events;
+        })));
+
+        int doneCount = outcomes.Sum(events => events.OfType<DoneEvent>().Count());
+        int duplicateCount = outcomes.Sum(events =>
+            events.OfType<ErrorEvent>().Count(error => error.Message.Contains("DUPLICATE")));
+        doneCount.ShouldBe(1, "恰好一方完成回合");
+        duplicateCount.ShouldBe(1, "另一方必须收到重复拒绝");
+        (await TestApp.CountAsync<Conversation>()).ShouldBe(1, "输家不得留下孤儿会话");
+
+        using var checkScope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var db = checkScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.ConversationMessages.CountAsync(message => message.ClientMessageId == key))
+            .ShouldBe(1, "同键用户消息恰一条");
+    }
+
+    [Test]
+    public void OnlyIdempotencyIndexViolationCountsAsDuplicate()
+    {
+        // 九审 #2 回归钉:连接中断/外键冲突/其他约束不得伪装成 DUPLICATE_MESSAGE。
+        static Microsoft.EntityFrameworkCore.DbUpdateException Wrap(Exception inner) => new("save failed", inner);
+
+        AgentChatService.IsIdempotencyKeyViolation(Wrap(new Npgsql.PostgresException(
+            "duplicate key", "ERROR", "ERROR", Npgsql.PostgresErrorCodes.UniqueViolation,
+            constraintName: AgentChatService.IdempotencyIndexName))).ShouldBeTrue();
+
+        // 同为 23505 但别的唯一索引 → 不是幂等命中。
+        AgentChatService.IsIdempotencyKeyViolation(Wrap(new Npgsql.PostgresException(
+            "duplicate key", "ERROR", "ERROR", Npgsql.PostgresErrorCodes.UniqueViolation,
+            constraintName: "IX_Something_Else"))).ShouldBeFalse();
+
+        // 外键冲突(如会话被并发删除)→ 必须继续抛出。
+        AgentChatService.IsIdempotencyKeyViolation(Wrap(new Npgsql.PostgresException(
+            "fk violation", "ERROR", "ERROR", Npgsql.PostgresErrorCodes.ForeignKeyViolation,
+            constraintName: AgentChatService.IdempotencyIndexName))).ShouldBeFalse();
+
+        // 非 Postgres 异常(连接中断等包装)→ 不是幂等命中。
+        AgentChatService.IsIdempotencyKeyViolation(Wrap(new TimeoutException())).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task TamperedProposalDtoIsCaughtByIndependentVerification()
+    {
+        // 九审 #3 回归钉:校验对象是模型看到的 DTO——映射层把 5 写成 500 必须被独立 SQL 抓出。
+        await SeedFactoryAsync();
+        string ownerId = await TestApp.RunAsUserAsync(
+            "verify-dto@local", "Testing1234!", [Lingban.Domain.Constants.Roles.ProductionReporter]);
+
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var command = new Lingban.Application.Actions.ProposeReportProductionCommand(
+            new Lingban.Application.Actions.ReportProductionProposal("WO-CHAT", 5m, 5m, 0m, 0m), null);
+        var action = await sender.Send(command);
+
+        var verifier = scope.ServiceProvider.GetRequiredService<IFactVerifier>();
+        var honest = new Lingban.Application.Actions.ReportProductionProposalDto(
+            action.Id, action.ActionType, action.Summary, action.Status.ToString(),
+            "WO-CHAT", 5m, 5m, 0m, 0m, action.PayloadJson);
+        (await verifier.VerifyAsync(ToolNames.ReportProduction, command, honest))
+            .Status.ShouldBe(VerificationStatus.Verified);
+
+        (await verifier.VerifyAsync(ToolNames.ReportProduction, command, honest with { Completed = 500m }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy, "DTO 数量失真必须被抓");
+        (await verifier.VerifyAsync(ToolNames.ReportProduction, command, honest with { WorkOrderCode = "WO-FAKE" }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy, "DTO 工单号失真必须被抓");
+        (await verifier.VerifyAsync(ToolNames.ReportProduction, command, honest with { Status = "Approved" }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy, "DTO 状态失真必须被抓");
+        (await verifier.VerifyAsync(ToolNames.ReportProduction, command, honest with { Summary = "报工 WO-CHAT:完工 500" }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy, "DTO 摘要失真必须被抓");
+    }
+
+    [Test]
     public async Task ConversationIsInvisibleToNonOwner()
     {
         // M4 债回归钉:非属主访问会话 = 不存在(NotFound),防 conversationId 枚举。

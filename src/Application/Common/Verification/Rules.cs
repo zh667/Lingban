@@ -475,6 +475,8 @@ public class ReportProductionProposalVerificationRule : IVerificationRule
             row.PayloadJson, JsonOptions);
         Actions.ReportProductionProposal asked = command.Proposal;
 
+        // 三方核对(九审 #3):DTO 是模型看到的事实,必须逐字段对 DB;请求对 DB 抓存储篡改。
+        // 只对请求核对会漏掉"映射层把 5 写成 500"这类 DTO 侧失真。
         return VerificationResult.FromChecks(new[]
         {
             new VerificationCheck("Owner", _user.Id ?? "<anonymous>", row.OwnerUserId, row.OwnerUserId == _user.Id),
@@ -483,16 +485,18 @@ public class ReportProductionProposalVerificationRule : IVerificationRule
             new VerificationCheck("Status", dto.Status, "Pending",
                 dto.Status == nameof(Domain.Enums.PendingActionStatus.Pending)
                     && row.Status == (int)Domain.Enums.PendingActionStatus.Pending),
-            new VerificationCheck("WorkOrderCode", asked.WorkOrderCode, stored?.WorkOrderCode ?? "<null>",
-                stored?.WorkOrderCode == asked.WorkOrderCode),
-            new VerificationCheck("Completed", asked.Completed.ToString(), stored?.Completed.ToString() ?? "<null>",
-                stored?.Completed == asked.Completed),
-            new VerificationCheck("Qualified", asked.Qualified.ToString(), stored?.Qualified.ToString() ?? "<null>",
-                stored?.Qualified == asked.Qualified),
-            new VerificationCheck("Scrap", asked.Scrap.ToString(), stored?.Scrap.ToString() ?? "<null>",
-                stored?.Scrap == asked.Scrap),
-            new VerificationCheck("Rework", asked.Rework.ToString(), stored?.Rework.ToString() ?? "<null>",
-                stored?.Rework == asked.Rework)
+            new VerificationCheck("Summary", dto.Summary, row.Summary, dto.Summary == row.Summary),
+            new VerificationCheck("PayloadJson", dto.PayloadJson, row.PayloadJson, dto.PayloadJson == row.PayloadJson),
+            new VerificationCheck("WorkOrderCode", dto.WorkOrderCode, stored?.WorkOrderCode ?? "<null>",
+                stored?.WorkOrderCode == dto.WorkOrderCode && dto.WorkOrderCode == asked.WorkOrderCode),
+            new VerificationCheck("Completed", dto.Completed.ToString(), stored?.Completed.ToString() ?? "<null>",
+                stored?.Completed == dto.Completed && dto.Completed == asked.Completed),
+            new VerificationCheck("Qualified", dto.Qualified.ToString(), stored?.Qualified.ToString() ?? "<null>",
+                stored?.Qualified == dto.Qualified && dto.Qualified == asked.Qualified),
+            new VerificationCheck("Scrap", dto.Scrap.ToString(), stored?.Scrap.ToString() ?? "<null>",
+                stored?.Scrap == dto.Scrap && dto.Scrap == asked.Scrap),
+            new VerificationCheck("Rework", dto.Rework.ToString(), stored?.Rework.ToString() ?? "<null>",
+                stored?.Rework == dto.Rework && dto.Rework == asked.Rework)
         });
     }
 }

@@ -19,7 +19,7 @@ public record LineProductionTotals(decimal Completed, decimal Qualified);
 
 public record KnowledgeChunkRow(string DocumentTitle, string Section, string Text, bool HasEmbedding);
 
-public record PendingActionRow(string OwnerUserId, string ActionType, int Status, string PayloadJson);
+public record PendingActionRow(string OwnerUserId, string ActionType, int Status, string PayloadJson, string Summary);
 
 /// <summary>
 /// 校验专用的独立查询路径:基础设施层用原生 SQL 实现,

@@ -108,14 +108,13 @@ public class AgentChatService : IAgentChatService
         }
 
         Conversation conversation = await LoadOrCreateConversationAsync(conversationId, userMessage, cancellationToken);
-        _toolset.ConversationId = conversation.Id;
 
         List<ChatMessage> messages = await BuildContextAsync(conversation, cancellationToken);
         messages.Add(new ChatMessage(ChatRole.User, userMessage));
 
+        // 新会话与首条消息同一次 SaveChanges(九审 #4):并发同键时输家整体回滚,不留孤儿会话。
         conversation.Messages.Add(new ConversationMessage
         {
-            ConversationId = conversation.Id,
             Role = ConversationRole.User,
             Content = userMessage,
             ClientMessageId = clientMessageId,
@@ -123,13 +122,13 @@ public class AgentChatService : IAgentChatService
         });
 
         // 预检只是快路径,唯一索引才是保证(并发同键两个请求都能通过预检):
-        // 撞索引的一方按重复处理,不进模型循环。
+        // 只有幂等索引的唯一冲突按重复处理(九审 #2),其他持久化失败照常抛出。
         bool duplicateOnSave = false;
         try
         {
             await _context.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException) when (clientMessageId is not null)
+        catch (DbUpdateException exception) when (IsIdempotencyKeyViolation(exception))
         {
             duplicateOnSave = true;
         }
@@ -139,6 +138,8 @@ public class AgentChatService : IAgentChatService
             yield return new ErrorEvent("DUPLICATE_MESSAGE:该消息已提交过,请勿重复发送。");
             yield break;
         }
+
+        _toolset.ConversationId = conversation.Id;
 
         var chatOptions = new ChatOptions { Tools = _toolset.BuildTools() };
         var answer = new StringBuilder();
@@ -281,6 +282,7 @@ public class AgentChatService : IAgentChatService
             return existing;
         }
 
+        // 这里只组装不保存:新会话随首条用户消息一次提交(九审 #4)。
         var created = new Conversation
         {
             OwnerUserId = ownerId,
@@ -289,9 +291,20 @@ public class AgentChatService : IAgentChatService
                 : userMessage[..(MaxTitleLength - 1)] + "…"
         };
         _context.Conversations.Add(created);
-        await _context.SaveChangesAsync(cancellationToken);
         return created;
     }
+
+    /// <summary>幂等索引名与 ConversationMessageConfiguration 保持一致,是跨层契约。</summary>
+    public const string IdempotencyIndexName = "IX_ConversationMessages_IdempotencyKey";
+
+    /// <summary>
+    /// 只有幂等唯一索引的 23505 才算重复(九审 #2):连接中断、外键冲突、
+    /// 未来的 CHECK 约束都不得伪装成 DUPLICATE_MESSAGE。
+    /// </summary>
+    public static bool IsIdempotencyKeyViolation(DbUpdateException exception) =>
+        exception.InnerException is Npgsql.PostgresException postgres
+        && postgres.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation
+        && postgres.ConstraintName == IdempotencyIndexName;
 
     /// <summary>多轮上下文真实喂给模型(旧项目存了历史却从不使用的病根治点)。</summary>
     private async Task<List<ChatMessage>> BuildContextAsync(

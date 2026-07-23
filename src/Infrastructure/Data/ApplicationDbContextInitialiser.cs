@@ -90,6 +90,12 @@ public class ApplicationDbContextInitialiser
             await _roleManager.CreateAsync(knowledgeManagerRole);
         }
 
+        var productionReporterRole = new IdentityRole(Roles.ProductionReporter);
+        if (_roleManager.Roles.All(r => r.Name != productionReporterRole.Name))
+        {
+            await _roleManager.CreateAsync(productionReporterRole);
+        }
+
         // Default users
         var administrator = new ApplicationUser { UserName = "administrator@localhost", Email = "administrator@localhost" };
 
