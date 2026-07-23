@@ -2,8 +2,15 @@
 
 import { useRef, useState } from "react";
 import { t, type Locale } from "@/lib/i18n";
+import type { components } from "@/lib/api/schema";
 
 const API = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:5000";
+
+// REST 请求/响应类型一律来自 OpenAPI 生成(AGENTS.md §4);SSE 事件载荷不在 OpenAPI 内,在下方手工声明。
+type LoginRequest = components["schemas"]["LoginRequest"];
+type AccessTokenResponse = components["schemas"]["AccessTokenResponse"];
+type ChatRequest = components["schemas"]["ChatRequest"];
+type ConfirmRequest = components["schemas"]["ConfirmRequest"];
 
 type Verification = { status: string; summary: string };
 type ToolResult = {
@@ -42,10 +49,11 @@ export default function Home() {
     setLoginError(false);
     const res = await fetch(`${API}/api/Users/login`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password } satisfies LoginRequest),
     });
     if (!res.ok) { setLoginError(true); return; }
-    setToken((await res.json()).accessToken);
+    const tokens: AccessTokenResponse = await res.json();
+    setToken(tokens.accessToken);
   };
 
   const patch = (fn: (last: Turn) => void) =>
@@ -67,7 +75,7 @@ export default function Home() {
       body: JSON.stringify({
         conversationId: conversationId.current, message,
         clientMessageId: crypto.randomUUID(),
-      }),
+      } satisfies ChatRequest),
     });
     if (!res.ok || !res.body) { patch((x) => { x.error = m.streamError; }); setBusy(false); return; }
 
@@ -101,7 +109,7 @@ export default function Home() {
     const res = await fetch(`${API}/api/agentchat/actions/${action.actionId}/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ approve }),
+      body: JSON.stringify({ approve } satisfies ConfirmRequest),
     });
     if (res.ok) setTurns((prev) => {
       const next = [...prev];
