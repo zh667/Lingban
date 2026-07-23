@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Lingban.Application.Common.Interfaces;
 using Lingban.Domain.Common;
+using Lingban.Domain.Entities.Actions;
 using Lingban.Domain.Entities.Calendar;
 using Lingban.Domain.Entities.Conversations;
 using Lingban.Domain.Entities.Equipment;
@@ -69,6 +70,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
 
     public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+
+    public DbSet<PendingAction> PendingActions => Set<PendingAction>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

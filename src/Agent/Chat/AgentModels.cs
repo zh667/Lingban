@@ -47,6 +47,9 @@ public sealed record AnswerAuditEvent(
     IReadOnlyList<string> NonVerifiedTools,
     IReadOnlyList<string> InvalidCitations) : AgentEvent;
 
+/// <summary>HITL 待确认(铁律 #5):写操作只到提议为止,确认走独立端点。</summary>
+public sealed record HitlPendingEvent(int ActionId, string ActionType, string Summary, string PayloadJson) : AgentEvent;
+
 public sealed record DoneEvent(int ConversationId, int AssistantMessageId) : AgentEvent;
 
 public sealed record ErrorEvent(string Message) : AgentEvent;

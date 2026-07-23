@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Lingban.Agent.Chat;
+using Lingban.Application.Actions;
 using Lingban.Application.Common;
 using Lingban.Application.Common.Interfaces;
 using Lingban.Application.Common.Verification;
@@ -38,6 +39,10 @@ public static class ToolDescriptions
         "分析延期工单:所有未完结且已超过计划结束时间的工单,含延期小时数与所属产线编码。可选按产线编码过滤。";
 
     public const string GetDefectSummary = "统计近 N 天缺陷分布:按缺陷类型汇总数量与占比(帕累托底料)。";
+
+    public const string ReportProduction =
+        "提议一笔工单报工(完工/合格/报废/返工四账)。这是写操作:你只能提议,系统会弹出人工确认卡," +
+        "车间人员确认后才会执行。提议成功后告知用户等待确认,不要声称已执行。";
 
     public const string SearchKnowledge =
         "检索知识库(SOP/维护手册)。返回最相关的分块,每块带文档标题与章节锚点。" +

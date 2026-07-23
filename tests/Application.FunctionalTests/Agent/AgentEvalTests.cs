@@ -207,7 +207,7 @@ public class AgentEvalTests : TestBase
             .AsIChatClient();
         IChatClient pipeline = inner.AsBuilder().UseFunctionInvocation().Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>(), scope.ServiceProvider.GetRequiredService<ISender>());
 
         var service = new AgentChatService(
             pipeline,
@@ -219,7 +219,7 @@ public class AgentEvalTests : TestBase
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var events = new List<AgentEvent>();
-        await foreach (AgentEvent agentEvent in service.ChatAsync(null, question, timeout.Token))
+        await foreach (AgentEvent agentEvent in service.ChatAsync(null, question, null, timeout.Token))
         {
             events.Add(agentEvent);
         }

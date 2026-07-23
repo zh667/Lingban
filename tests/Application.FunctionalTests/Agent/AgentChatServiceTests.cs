@@ -51,7 +51,7 @@ public class AgentChatServiceTests : TestBase
             .UseFunctionInvocation()
             .Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>(), scope.ServiceProvider.GetRequiredService<ISender>());
 
         return new AgentChatService(
             pipeline,
@@ -153,6 +153,90 @@ public class AgentChatServiceTests : TestBase
     }
 
     [Test]
+    public async Task HitlProposalDoesNotMutateUntilConfirmed()
+    {
+        // 铁律 #5 全链路回归钉:提议 → 零改动;确认 → 执行;拒绝 → 不执行。
+        await SeedFactoryAsync();
+        string ownerId = await TestApp.RunAsDefaultUserAsync();
+        int orderId;
+        using (var seedScope = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            var context = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var order = await context.WorkOrders.FirstAsync(o => o.Code == "WO-CHAT");
+            orderId = order.Id;
+        }
+
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var scripted = new ScriptedChatClient(
+            ("ReportProduction", "{\"workOrderCode\":\"WO-CHAT\",\"completed\":5,\"qualified\":5}"),
+            new[] { "已提交报工申请,等待车间确认。" });
+        AgentChatService service = CreateService(scope, scripted);
+
+        var events = new List<AgentEvent>();
+        await foreach (AgentEvent agentEvent in service.ChatAsync(null, "帮 WO-CHAT 报工 5 件,全部合格"))
+        {
+            events.Add(agentEvent);
+        }
+
+        HitlPendingEvent pending = events.OfType<HitlPendingEvent>().ShouldHaveSingleItem();
+        pending.ActionType.ShouldBe("ReportProduction");
+
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Id == orderId))
+            .CompletedQuantity.ShouldBe(0m, "提议阶段禁止改动生产数据");
+
+        // 确认 → 执行(属主 = test-user,与提议同一 FakeUser)。
+        var confirm = new Lingban.Application.Actions.ConfirmPendingActionCommand(pending.ActionId, true);
+        var confirmHandler = new Lingban.Application.Actions.ConfirmPendingActionCommandHandler(
+            scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
+            scope.ServiceProvider.GetRequiredService<ISender>(),
+            new FakeUser(ownerId));
+        var approved = await confirmHandler.Handle(confirm, CancellationToken.None);
+        approved.Status.ShouldBe(Lingban.Domain.Enums.PendingActionStatus.Approved);
+
+        (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Id == orderId))
+            .CompletedQuantity.ShouldBe(5m);
+
+        // 重复确认 → 拒绝(状态机)。
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => confirmHandler.Handle(confirm, CancellationToken.None));
+
+        // 非属主确认 → NotFound。
+        var intruderHandler = new Lingban.Application.Actions.ConfirmPendingActionCommandHandler(
+            scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
+            scope.ServiceProvider.GetRequiredService<ISender>(),
+            new FakeUser("intruder"));
+        await Should.ThrowAsync<NotFoundException>(
+            () => intruderHandler.Handle(new Lingban.Application.Actions.ConfirmPendingActionCommand(pending.ActionId, true), CancellationToken.None));
+    }
+
+    [Test]
+    public async Task DuplicateClientMessageIdIsRejected()
+    {
+        // 六审遗留债回归钉:同 clientMessageId 重试不产生重复回合。
+        await SeedFactoryAsync();
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        AgentChatService service = CreateService(scope, new ScriptedChatClient(null, new[] { "答一。" }));
+        var key = Guid.NewGuid();
+        DoneEvent done = null!;
+        await foreach (AgentEvent e in service.ChatAsync(null, "问题一", key))
+        {
+            if (e is DoneEvent d) done = d;
+        }
+
+        using var scope2 = FunctionalTestSetup.ScopeFactory.CreateScope();
+        AgentChatService retry = CreateService(scope2, new ScriptedChatClient(null, new[] { "不该执行。" }));
+        var events = new List<AgentEvent>();
+        await foreach (AgentEvent e in retry.ChatAsync(done.ConversationId, "问题一", key))
+        {
+            events.Add(e);
+        }
+
+        events.OfType<ErrorEvent>().ShouldHaveSingleItem().Message.ShouldContain("DUPLICATE");
+        events.OfType<DoneEvent>().ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task ConversationIsInvisibleToNonOwner()
     {
         // M4 债回归钉:非属主访问会话 = 不存在(NotFound),防 conversationId 枚举。
@@ -175,7 +259,7 @@ public class AgentChatServiceTests : TestBase
         IChatClient client = pipeline.AsBuilder().UseFunctionInvocation().Build(scope2.ServiceProvider);
         var intruder = new AgentChatService(
             client,
-            new AgentToolset(scope2.ServiceProvider.GetRequiredService<MesToolExecutor>()),
+            new AgentToolset(scope2.ServiceProvider.GetRequiredService<MesToolExecutor>(), scope2.ServiceProvider.GetRequiredService<ISender>()),
             scope2.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope2.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
             new PinnedTimeProvider(T0.AddHours(2)),

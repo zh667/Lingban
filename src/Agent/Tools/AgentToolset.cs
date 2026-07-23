@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Text.Json;
 using Lingban.Agent.Chat;
+using Lingban.Application.Actions;
 using Lingban.Application.Common;
+using MediatR;
 using Microsoft.Extensions.AI;
 
 namespace Lingban.Agent.Tools;
@@ -15,9 +17,17 @@ public class AgentToolset
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly MesToolExecutor _executor;
+    private readonly ISender _sender;
     private readonly List<AgentEvent> _pendingEvents = new();
 
-    public AgentToolset(MesToolExecutor executor) => _executor = executor;
+    public AgentToolset(MesToolExecutor executor, ISender sender)
+    {
+        _executor = executor;
+        _sender = sender;
+    }
+
+    /// <summary>当前会话 ID,由 AgentChatService 在循环开始时设置(供 HITL 挂起动作关联)。</summary>
+    public int? ConversationId { get; set; }
 
     public IReadOnlyList<AgentEvent> DrainEvents()
     {
@@ -32,7 +42,8 @@ public class AgentToolset
         AIFunctionFactory.Create(AnalyzeDelayedOrdersAsync, ToolNames.AnalyzeDelayedOrders, ToolDescriptions.AnalyzeDelayedOrders),
         AIFunctionFactory.Create(GetDefectSummaryAsync, ToolNames.GetDefectSummary, ToolDescriptions.GetDefectSummary),
         AIFunctionFactory.Create(CalculateOeeAsync, ToolNames.CalculateOee, ToolDescriptions.CalculateOee),
-        AIFunctionFactory.Create(SearchKnowledgeAsync, ToolNames.SearchKnowledge, ToolDescriptions.SearchKnowledge)
+        AIFunctionFactory.Create(SearchKnowledgeAsync, ToolNames.SearchKnowledge, ToolDescriptions.SearchKnowledge),
+        AIFunctionFactory.Create(ProposeReportProductionAsync, "ReportProduction", ToolDescriptions.ReportProduction)
     };
 
     private async Task<string> GetTodayWorkOrdersAsync(
@@ -61,6 +72,40 @@ public class AgentToolset
         [Description("生产日,格式 yyyy-MM-dd,可选;不填按当前时刻推算")] string? productionDate = null,
         CancellationToken cancellationToken = default)
         => Render(await _executor.CalculateOeeAsync(equipmentCode, productionDate, cancellationToken));
+
+    private async Task<string> ProposeReportProductionAsync(
+        [Description("工单编号,如 WO-2607-01")] string workOrderCode,
+        [Description("本次完工数量")] decimal completed,
+        [Description("其中合格数量")] decimal qualified = 0,
+        [Description("其中报废数量")] decimal scrap = 0,
+        [Description("其中返工数量")] decimal rework = 0,
+        CancellationToken cancellationToken = default)
+    {
+        string callId = FunctionInvokingChatClient.CurrentContext?.CallContent.CallId ?? Guid.NewGuid().ToString("N");
+        try
+        {
+            var action = await _sender.Send(new ProposeReportProductionCommand(
+                new ReportProductionProposal(workOrderCode, completed, qualified, scrap, rework),
+                ConversationId), cancellationToken);
+            _pendingEvents.Add(new HitlPendingEvent(action.Id, action.ActionType, action.Summary, action.PayloadJson));
+            return JsonSerializer.Serialize(new
+            {
+                status = "pending_confirmation",
+                actionId = action.Id,
+                summary = action.Summary,
+                note = "已生成待确认动作,须车间人员在界面确认后才会执行;请如实告知用户尚未执行。"
+            }, JsonOptions);
+        }
+        catch (Exception exception) when (
+            exception is Lingban.Application.Common.Exceptions.ValidationException or InvalidOperationException)
+        {
+            _pendingEvents.Add(new ToolErrorEvent(callId, "ReportProduction", exception.Message));
+            return JsonSerializer.Serialize(new
+            {
+                error = new { tool = "ReportProduction", message = exception.Message, recoverable = true }
+            }, JsonOptions);
+        }
+    }
 
     private string Render(MesToolExecution execution)
     {

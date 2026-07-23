@@ -14,4 +14,7 @@ public class ConversationMessage : BaseAuditableEntity, ITenantEntity
 
     /// <summary>本条助手消息期间的工具调用结果(JSON,含校验结论与真实 SQL)。</summary>
     public string? ToolResultsJson { get; set; }
+
+    /// <summary>客户端幂等键:同键重试不产生重复回合。</summary>
+    public Guid? ClientMessageId { get; set; }
 }
