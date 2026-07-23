@@ -170,11 +170,40 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **目标**:Lingban 成为 AI 生态里的制造业数据源。
 
-- [ ] 先调用 `mcp-builder` skill,再动工;用官方 MCP C# SDK 把工具集暴露为 `lingban-mes` Server(stdio + HTTP 两种传输)。
-- [ ] 工具实现与进程内 Agent 循环共用同一层,禁止两套逻辑。
-- [ ] 鉴权与租户上下文在 MCP 边界处理。
+- [x] mcp-builder skill 先行;官方 MCP C# SDK(ModelContextProtocol 1.4.1)暴露 `lingban-mes`:stdio(src/McpServer,日志走 stderr)+ HTTP(Web `/mcp`,RequireAuthorization)。
+- [x] 单一实现两处暴露:LingbanMesTools 与 Agent 循环共用同一批 MediatR 查询、FactVerifier、QueryLog;每次调用独立作用域内钉死 AsOf;错误结构化可恢复。
+- [x] M4 债第一批:端点鉴权、会话属主(防枚举回归测试)、复合租户外键(谱系关键关系,库级杜绝跨租户引用)、固定窗口限速;CodeQL 待用户页面一键开启。
+- 命名遵循 MCP 惯例:mes_ 前缀 + snake_case;ReadOnly 注解;工具描述含参数示例。
 
 **验收**:本机 Claude Code 配置 `lingban-mes` 后,直接问"今天有几张工单"能得到经校验的真实数据;AGENTS.md 第 10 节登记工具清单。
+
+## M4 审查跟进(Codex 五审,2026-07-23)
+
+五审 5 bug / 5 风险 / 1 建议,全部核实为真。同 PR 修复:
+- #1 租户授权 → MesData 角色策略(Administrator/MesReader)挂上聊天与 /mcp;自注册用户默认无角色读不到数据;完整用户-租户 membership 仍按债表在多租户真实启用时落地。
+- #2 /mcp 限速 → 独立策略 60/分钟,按 NameIdentifier(前缀 user:/ip:)分区。
+- #3 单一实现 → **MesToolExecutor** 内核(参数归一/日期解析/查询/校验编排/SQL 分账/错误分类只此一处);AgentToolset 与 LingbanMesTools 降为薄适配层;工具文案共享常量。
+- #4 协议错误 → MCP 工具返回 CallToolResult,业务错误 IsError=true(测试钉住);来源不明的 InvalidOperationException 收敛为稳定错误码不泄内部信息。
+- #5 复合外键补全 → 质量/设备事实/工序/会话消息全部 (TenantId, Id);**EF 模型级架构测试**枚举全部租户实体外键强制含 TenantId(白名单=三条 SetNull 工位关系)——该守卫首跑即抓出 3 条漏网。
+- #6 stdio 威胁模型写入 AGENTS.md 第 10 节(本机信任、只读角色、连接串卫生)。
+- #7 限速分区改 NameIdentifier + 前缀。
+- #8 429 带 Retry-After 与结构化正文;单轮工具调用预算 MaximumIterationsPerRequest=8;SSE 并发上限留 M6(债)。
+- #9 CancellationToken 贯穿 MCP 工具→MediatR→FactVerifier→EF。
+- #11 只读工具 Idempotent=true。
+
+留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6);SSE 并发流上限(M6);stdio 只读数据库角色(部署期)。
+
+## M4 审查跟进(Codex 六审/增量复审,2026-07-23)
+
+六审实测发现合并阻断:stdio 宿主缺 IUser 注册,四工具真实协议调用全灭(直接方法测试自证的恶果);判定五审 11 条中 5 已修 4 部分 1 未修。全部处置:
+- #1(阻断)→ ServiceUser 进程身份注册进 McpServer 与 DeviceSimulator(后者同病,tick 曾无声吞错);**进程级协议冒烟测试**(真启动 stdio 宿主:握手→列表→成功调用含 Verified→坏日期 isError=true),自证时代结束。
+- #2(阻断)→ FactVerifier 显式重抛请求取消,不再把取消解释成 Failed。
+- #3 → 校验异常收敛为稳定错误码(VERIFICATION_EXECUTION_ERROR),不泄表名列名;契约:VerificationStatus.Failed 在 MCP 层 IsError=true。
+- #4 → 移除 TargetSite 命名空间嗅探:仅白名单类型(Validation/NotFound)原文透出,IOE 一律稳定码;写工具接入时以 DomainRuleException 类型白名单透出(债)。
+- #5 → GlobalLimiter 用户级总预算 80/分钟兜住策略叠加;Retry-After 读取 lease 真实剩余窗口。
+- #6 → FK 守卫白名单精化:键含 FK 属性、强制可空+SetNull、恰好命中一次、未消费项报警。
+- #7 → 迭代预算语义纠偏(注释)+ AnswerAuditor 拒绝空答案;严格按调用计数的预算随写工具落地(债)。
+- 次要留债:Logging/Performance behaviour 的 Identity 查询不接受取消令牌(接口签名改动,随鉴权深化)。
 
 ## 里程碑 5:知识库与真 RAG
 

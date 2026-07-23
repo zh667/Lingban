@@ -10,6 +10,7 @@
   <Folder Name="/src/">
     <Project Path="src/Agent/Agent.csproj" />
     <Project Path="src/AppHost/AppHost.csproj" DefaultStartup="true" />
+    <Project Path="src/McpServer/McpServer.csproj" />
     <Project Path="src/ServiceDefaults/ServiceDefaults.csproj" />
     <Project Path="src/Application/Application.csproj" />
     <Project Path="src/DeviceSimulator/DeviceSimulator.csproj" />

@@ -6,7 +6,7 @@ namespace Lingban.Web.Endpoints;
 
 /// <summary>
 /// Agent 对话 SSE 端点:token/tool_call/tool_result/verification 事件原样透传。
-/// 匿名访问仅限当前阶段(单租户开发期);M4 MCP/鉴权边界落地时收紧——已记入债表。
+/// M4 债已还:必须登录(Identity bearer),按属主访问会话,固定窗口限速。
 /// </summary>
 public class AgentChat : IEndpointGroup
 {
@@ -14,7 +14,9 @@ public class AgentChat : IEndpointGroup
 
     public static void Map(RouteGroupBuilder groupBuilder)
     {
-        groupBuilder.MapPost(Chat, "/chat").AllowAnonymous();
+        groupBuilder.MapPost(Chat, "/chat")
+            .RequireAuthorization("MesData")
+            .RequireRateLimiting("agent-chat");
     }
 
     public record ChatRequest(int? ConversationId, string Message);

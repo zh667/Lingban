@@ -49,19 +49,22 @@ public class AgentChatService : IAgentChatService
     private readonly IAgentInvocationClock _clock;
     private readonly IApplicationDbContext _context;
     private readonly TimeProvider _timeProvider;
+    private readonly IUser _user;
 
     public AgentChatService(
         IChatClient chatClient,
         AgentToolset toolset,
         IAgentInvocationClock clock,
         IApplicationDbContext context,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IUser user)
     {
         _chatClient = chatClient;
         _toolset = toolset;
         _clock = clock;
         _context = context;
         _timeProvider = timeProvider;
+        _user = user;
     }
 
     public async IAsyncEnumerable<AgentEvent> ChatAsync(
@@ -227,16 +230,21 @@ public class AgentChatService : IAgentChatService
     private async Task<Conversation> LoadOrCreateConversationAsync(
         int? conversationId, string userMessage, CancellationToken cancellationToken)
     {
+        string ownerId = _user.Id ?? throw new UnauthorizedAccessException("Authenticated user is required.");
         if (conversationId is int id)
         {
+            // 逐对象授权:非属主的会话视为不存在,防 conversationId 枚举(M4 债)。
             Conversation? existing = await _context.Conversations
-                .FirstOrDefaultAsync(conversation => conversation.Id == id, cancellationToken);
+                .FirstOrDefaultAsync(
+                    conversation => conversation.Id == id && conversation.OwnerUserId == ownerId,
+                    cancellationToken);
             Guard.Against.NotFound(id, existing);
             return existing;
         }
 
         var created = new Conversation
         {
+            OwnerUserId = ownerId,
             Title = userMessage.Length <= MaxTitleLength
                 ? userMessage
                 : userMessage[..(MaxTitleLength - 1)] + "…"

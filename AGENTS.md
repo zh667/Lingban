@@ -91,7 +91,7 @@
 
 ## 10. AI 能力与 harness
 
-- 本项目暴露的 MCP Server:MES 工具集(工单/质量/OEE/知识库)——建成后在此登记入口与工具清单。
+- **MCP Server `lingban-mes` 已建成**(与 Agent 循环共用同一实现):工具 `mes_get_today_work_orders` / `mes_analyze_delayed_orders` / `mes_get_defect_summary` / `mes_calculate_oee`(全部只读,返回数据+校验结论+真实 SQL)。stdio:`dotnet run --project src/McpServer`(连接串经 `ConnectionStrings__LingbanDb` 环境变量);HTTP:Web 的 `/mcp`(需 bearer)。**stdio 信任模型**:无协议鉴权/属主/限速,信任边界=本机用户与父 MCP 客户端;进程固定使用配置租户;数据库账号应使用只读角色;调用预算由客户端负责;连接串勿写入 shell 历史(用客户端配置文件或环境导入)。本机接入:`claude mcp add lingban-mes -e ConnectionStrings__LingbanDb="<连接串>" -- dotnet run --project <仓库>/src/McpServer`。
 - 用户级 skills(已装):`mcp-builder`(MCP Server 施工)、`webapp-testing`(UI 验证)、`frontend-design`(操作台视觉设计,新建或改版 UI 前先调用)、`xlsx` / `docx`(报表与 SOP 语料)、`skill-creator`。
 - 计划中的项目级 skill:`mes-domain`(ISA-95 词汇、班次日历、批次谱系不变量)→ 建成后放 `.claude/skills/` 并登记于此。
 
@@ -103,10 +103,17 @@
 
 ## 12. 计划与交付
 
+- **动工前的决策关卡**:开始新功能/新里程碑前,先识别"用户的选择会改变走向"的决策点(产品语义、领域建模、面向谁、数据来源、成本取舍),以**带推荐项的选项**形式请用户拍板后再动工;工程惯例、已批规划内的事项、审查修复方向不设关卡,声明假设并继续。每次拍板记入规划的决策记录表。
 - 复杂或跨会话任务在 `docs/plans/active/` 维护计划、进度和决策。
 - 完成时用中文说明:改了什么、为什么、运行了哪些验证、结果、剩余风险;区分已验证事实、合理推断和未验证事项。
 
-## 13. 规则维护
+## 13. 交叉审查分诊
+
+- 修复中含**新设计**(并发控制、安全边界、协议假设、新抽象)→ 对修复 diff 做一次**增量复审**(范围只取修复提交);修复是照方抓药(索引、校验器、配置、测试、文档)→ 一审一修直接合,不复审。
+- 复审只剩"建议"级发现 → 该审查链条终止,合并。
+- 依据:本仓库实测,一审修复中的新设计两次被复审抓出阻断级缺陷(幂等竞态、闸门漏报工)。
+
+## 14. 规则维护
 
 - 重复错误优先固化为测试、lint、CI 或脚本,而不是扩写本文件。
 - 细则下沉 `docs/`;命令、架构变化时同一改动内更新本文件;定期删除失效规则。

@@ -6,6 +6,7 @@ namespace Lingban.Application.FunctionalTests;
 public class FunctionalTestSetup
 {
     internal static IServiceScopeFactory ScopeFactory { get; private set; } = null!;
+    internal static string DatabaseConnectionString { get; private set; } = null!;
     internal static DatabaseResetter? DbResetter { get; private set; }
 
     private static WebApiFactory? _factory;
@@ -39,6 +40,7 @@ public class FunctionalTestSetup
             Services.Database, cancellationToken);
 
         var connectionString = (await _app.GetConnectionStringAsync(Services.Database))!;
+        DatabaseConnectionString = connectionString;
 
         _factory = new WebApiFactory(connectionString);
         ScopeFactory = _factory.Services.GetRequiredService<IServiceScopeFactory>();

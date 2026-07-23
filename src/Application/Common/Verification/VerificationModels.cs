@@ -78,12 +78,18 @@ public class FactVerifier : IFactVerifier
         {
             return await rule.VerifyAsync(toolRequest, toolResult, cancellationToken);
         }
-        catch (Exception exception)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // 六审 #2:请求取消是控制流,不是业务结果,必须穿透。
+            throw;
+        }
+        catch (Exception)
+        {
+            // 六审 #3:内部异常不外泄(表名/列名等);详情走服务端日志(适配层记录)。
             return new VerificationResult
             {
                 Status = VerificationStatus.Failed,
-                Summary = $"Verification rule threw: {exception.Message}"
+                Summary = "VERIFICATION_EXECUTION_ERROR: 独立校验路径执行失败,数据未经复核。"
             };
         }
     }

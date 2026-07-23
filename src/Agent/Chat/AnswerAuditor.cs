@@ -37,6 +37,12 @@ public static class AnswerAuditor
 
         CollectNumbers(userMessage, allowed);
 
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            // 六审 #7:工具预算耗尽等场景可能产生空答案——空答案不许静默通过审计。
+            return new AnswerAuditEvent(false, new[] { "<EMPTY_ANSWER>" }, nonVerifiedTools);
+        }
+
         List<string> unverified = NumberPattern.Matches(answer)
             .Select(match => match.Value)
             .Where(token => !IsAllowed(token, allowed))

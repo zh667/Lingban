@@ -164,18 +164,15 @@ public class AgentEvalTests : TestBase
             .AsIChatClient();
         IChatClient pipeline = inner.AsBuilder().UseFunctionInvocation().Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            scope.ServiceProvider.GetRequiredService<IFactVerifier>(),
-            scope.ServiceProvider.GetRequiredService<IQueryLog>(),
-            scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
 
         var service = new AgentChatService(
             pipeline,
             toolset,
             scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
-            TimeProvider.System);
+            TimeProvider.System,
+            new AgentChatServiceTests.FakeUser());
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var events = new List<AgentEvent>();

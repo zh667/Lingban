@@ -14,6 +14,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(product => product.UnitOfMeasure).HasMaxLength(16).IsRequired();
 
         builder.HasIndex(product => new { product.TenantId, product.Code }).IsUnique();
+        builder.HasAlternateKey(product => new { product.TenantId, product.Id });
     }
 }
 
@@ -24,14 +25,17 @@ public class BomLineConfiguration : IEntityTypeConfiguration<BomLine>
         builder.Property(line => line.TenantId).HasMaxLength(64).IsRequired();
         builder.Property(line => line.UnitOfMeasure).HasMaxLength(16).IsRequired();
 
+        // 复合租户外键(M4 债):数据库层面杜绝跨租户引用。
         builder.HasOne(line => line.Product)
             .WithMany(product => product.BomLines)
-            .HasForeignKey(line => line.ProductId)
+            .HasForeignKey(line => new { line.TenantId, line.ProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(line => line.ComponentProduct)
             .WithMany()
-            .HasForeignKey(line => line.ComponentProductId)
+            .HasForeignKey(line => new { line.TenantId, line.ComponentProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(line => new { line.TenantId, line.ProductId, line.ComponentProductId }).IsUnique();
@@ -56,15 +60,19 @@ public class MaterialLotConfiguration : IEntityTypeConfiguration<MaterialLot>
             .ValueGeneratedOnAddOrUpdate()
             .IsConcurrencyToken();
 
+        builder.HasAlternateKey(lot => new { lot.TenantId, lot.Id });
+
         builder.HasOne(lot => lot.Product)
             .WithMany()
-            .HasForeignKey(lot => lot.ProductId)
+            .HasForeignKey(lot => new { lot.TenantId, lot.ProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         // 谱系"向上"边:产出工单删不掉已有产出批次。
         builder.HasOne(lot => lot.ProducedByWorkOrder)
             .WithMany(order => order.OutputLots)
-            .HasForeignKey(lot => lot.ProducedByWorkOrderId)
+            .HasForeignKey(lot => new { lot.TenantId, lot.ProducedByWorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
@@ -80,12 +88,14 @@ public class MaterialConsumptionConfiguration : IEntityTypeConfiguration<Materia
         // 谱系边不可级联清除:批次与工位被引用时禁止删除。
         builder.HasOne(consumption => consumption.MaterialLot)
             .WithMany(lot => lot.Consumptions)
-            .HasForeignKey(consumption => consumption.MaterialLotId)
+            .HasForeignKey(consumption => new { consumption.TenantId, consumption.MaterialLotId })
+            .HasPrincipalKey(lot => new { lot.TenantId, lot.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(consumption => consumption.Workstation)
             .WithMany()
-            .HasForeignKey(consumption => consumption.WorkstationId)
+            .HasForeignKey(consumption => new { consumption.TenantId, consumption.WorkstationId })
+            .HasPrincipalKey(station => new { station.TenantId, station.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         // 幂等兜底:同租户下同一事件键只允许一条消耗记录。

@@ -13,6 +13,7 @@ public class ProductionLineConfiguration : IEntityTypeConfiguration<ProductionLi
         builder.Property(line => line.Name).HasMaxLength(256).IsRequired();
 
         builder.HasIndex(line => new { line.TenantId, line.Code }).IsUnique();
+        builder.HasAlternateKey(line => new { line.TenantId, line.Id });
     }
 }
 
@@ -25,6 +26,13 @@ public class WorkstationConfiguration : IEntityTypeConfiguration<Workstation>
         builder.Property(station => station.Name).HasMaxLength(256).IsRequired();
 
         builder.HasIndex(station => new { station.TenantId, station.Code }).IsUnique();
+        builder.HasAlternateKey(station => new { station.TenantId, station.Id });
+
+        builder.HasOne(station => station.ProductionLine)
+            .WithMany(line => line.Workstations)
+            .HasForeignKey(station => new { station.TenantId, station.ProductionLineId })
+            .HasPrincipalKey(line => new { line.TenantId, line.Id })
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -35,9 +43,12 @@ public class ProcessRouteConfiguration : IEntityTypeConfiguration<ProcessRoute>
         builder.Property(route => route.TenantId).HasMaxLength(64).IsRequired();
         builder.Property(route => route.Name).HasMaxLength(256).IsRequired();
 
+        builder.HasAlternateKey(route => new { route.TenantId, route.Id });
+
         builder.HasOne(route => route.Product)
             .WithMany()
-            .HasForeignKey(route => route.ProductId)
+            .HasForeignKey(route => new { route.TenantId, route.ProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
@@ -54,6 +65,12 @@ public class ProcessStepConfiguration : IEntityTypeConfiguration<ProcessStep>
             .HasForeignKey(step => step.WorkstationId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        builder.HasOne(step => step.ProcessRoute)
+            .WithMany(route => route.Steps)
+            .HasForeignKey(step => new { step.TenantId, step.ProcessRouteId })
+            .HasPrincipalKey(route => new { route.TenantId, route.Id })
+            .OnDelete(DeleteBehavior.Cascade);
+
         builder.HasIndex(step => new { step.TenantId, step.ProcessRouteId, step.Sequence }).IsUnique();
     }
 }
@@ -68,6 +85,7 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
 
         builder.HasIndex(order => new { order.TenantId, order.Code }).IsUnique();
         builder.HasIndex(order => new { order.TenantId, order.Status });
+        builder.HasAlternateKey(order => new { order.TenantId, order.Id });
 
         // 乐观并发:未走闸门的状态转换(Start/Cancel/Release)并发时后写方冲突,
         // 杜绝"带 ActualStartUtc 的 Cancelled 工单"这类双成功(Codex 三审 #2)。
@@ -79,18 +97,21 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
 
         builder.HasOne(order => order.Product)
             .WithMany()
-            .HasForeignKey(order => order.ProductId)
+            .HasForeignKey(order => new { order.TenantId, order.ProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(order => order.ProductionLine)
             .WithMany()
-            .HasForeignKey(order => order.ProductionLineId)
+            .HasForeignKey(order => new { order.TenantId, order.ProductionLineId })
+            .HasPrincipalKey(line => new { line.TenantId, line.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         // 消耗集合走私有字段,保证只能经 RecordConsumption 记账。
         builder.HasMany(order => order.Consumptions)
             .WithOne(consumption => consumption.WorkOrder)
-            .HasForeignKey(consumption => consumption.WorkOrderId)
+            .HasForeignKey(consumption => new { consumption.TenantId, consumption.WorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Navigation(order => order.Consumptions)
@@ -107,7 +128,8 @@ public class WorkOrderOperationConfiguration : IEntityTypeConfiguration<WorkOrde
 
         builder.HasOne(operation => operation.WorkOrder)
             .WithMany(order => order.Operations)
-            .HasForeignKey(operation => operation.WorkOrderId)
+            .HasForeignKey(operation => new { operation.TenantId, operation.WorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(operation => operation.Workstation)

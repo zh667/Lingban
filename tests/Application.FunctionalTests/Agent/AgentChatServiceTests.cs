@@ -51,18 +51,15 @@ public class AgentChatServiceTests : TestBase
             .UseFunctionInvocation()
             .Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            scope.ServiceProvider.GetRequiredService<IFactVerifier>(),
-            scope.ServiceProvider.GetRequiredService<IQueryLog>(),
-            scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
 
         return new AgentChatService(
             pipeline,
             toolset,
             scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
-            new PinnedTimeProvider(T0.AddHours(1)));
+            new PinnedTimeProvider(T0.AddHours(1)),
+            new FakeUser());
     }
 
     [Test]
@@ -156,6 +153,43 @@ public class AgentChatServiceTests : TestBase
     }
 
     [Test]
+    public async Task ConversationIsInvisibleToNonOwner()
+    {
+        // M4 债回归钉:非属主访问会话 = 不存在(NotFound),防 conversationId 枚举。
+        await SeedFactoryAsync();
+        int conversationId;
+        using (var scope1 = FunctionalTestSetup.ScopeFactory.CreateScope())
+        {
+            AgentChatService owner = CreateService(scope1, new ScriptedChatClient(null, new[] { "答。" }));
+            DoneEvent done = null!;
+            await foreach (AgentEvent e in owner.ChatAsync(null, "属主的问题"))
+            {
+                if (e is DoneEvent d) done = d;
+            }
+
+            conversationId = done.ConversationId;
+        }
+
+        using var scope2 = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var pipeline = new ScriptedChatClient(null, new[] { "不该到这。" });
+        IChatClient client = pipeline.AsBuilder().UseFunctionInvocation().Build(scope2.ServiceProvider);
+        var intruder = new AgentChatService(
+            client,
+            new AgentToolset(scope2.ServiceProvider.GetRequiredService<MesToolExecutor>()),
+            scope2.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
+            scope2.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
+            new PinnedTimeProvider(T0.AddHours(2)),
+            new FakeUser("intruder"));
+
+        await Should.ThrowAsync<NotFoundException>(async () =>
+        {
+            await foreach (AgentEvent _ in intruder.ChatAsync(conversationId, "复述此前对话"))
+            {
+            }
+        });
+    }
+
+    [Test]
     public async Task SecondTurnFeedsConversationHistoryToTheModel()
     {
         await SeedFactoryAsync();
@@ -190,6 +224,17 @@ public class AgentChatServiceTests : TestBase
         seen.Any(message => message.Text.Contains("第一轮问题")).ShouldBeTrue();
         seen.Any(message => message.Text.Contains("第一轮回答")).ShouldBeTrue();
         seen[0].Role.ShouldBe(ChatRole.System);
+    }
+
+    internal sealed class FakeUser : Lingban.Application.Common.Interfaces.IUser
+    {
+        private readonly string _id;
+
+        public FakeUser(string id = "test-user") => _id = id;
+
+        public string? Id => _id;
+
+        public List<string>? Roles => null;
     }
 
     private sealed class PinnedTimeProvider : TimeProvider
