@@ -9,7 +9,7 @@
 - **目标**:带事实校验的制造业 AI Copilot("AI 领班"):MES 数据查询、异常分析、批次追溯、SOP/RAG、OEE 与生产报表;全部 MES 工具同时以 MCP Server 对外暴露。
 - **命名约定**:解决方案 `Lingban.sln`;命名空间 `Lingban.Domain / Lingban.Application / Lingban.Infrastructure / Lingban.Web / Lingban.Agent`;MCP Server 名 `lingban-mes`。
 - **技术栈**:.NET 10(ASP.NET Core + EF Core)+ PostgreSQL 17(pgvector 镜像,.NET Aspire 容器编排,无 docker-compose);Agent 层 Microsoft Agent Framework(`Microsoft.Agents.AI`)+ 官方 MCP C# SDK;前端 Next.js + TypeScript + Tailwind(M6 才引入)。
-- **骨架来源**:jasontaylordev/CleanArchitecture v10.8.0(已生成:`src/{Domain,Application,Infrastructure,Web,Agent,AppHost,ServiceDefaults,Shared}`,Azure 资源已移除)。
+- **骨架来源**:jasontaylordev/CleanArchitecture v10.8.0(已生成:`src/{Domain,Application,Infrastructure,Web,Agent,AppHost,ServiceDefaults,Shared,DeviceSimulator}`,Azure 资源与 Todo 模板业务已移除)。
 - **可移植资产**:旧仓库 `zh667/Mes-Agent` 的工具类、FactVerifier 验证框架、i18n 双语目录、DeviceSimulator;教训清单见本仓库 `docs/reviews/2026-07-22-agent-mes-critique.md`。
 - **包管理器**:NuGet(后端)、pnpm(前端)。
 - **运行时版本**:.NET 10 SDK(`global.json` 钉 10.0.201,rollForward latestFeature)、Node 20+(M6 前才不需要)。

@@ -68,12 +68,11 @@ Codex CLI 审查原始 PR #2 diff,报 7 bug / 7 风险 / 1 建议。逐条核实
 | 消耗上报幂等键 (TenantId, EventId) 唯一索引(#8) | **M2**,消耗上报进入 API/工具的同一 PR | 任何外部调用方(工具/端点/模拟器)能触发 RecordConsumption 时 | 幂等键设计跟随调用方形态;晚于 API 上线就是真超扣 |
 | OEE 用班次区间集合而非首尾包络(#9 余下) | **M2**,移植 OEE 工具的同一 PR | OEE 计算首次引用 ShiftCalendar 时 | 不修则午休等空档计入计划时间,OEE 数字直接失真 |
 | Complete 前置校验(消耗>0、产出=报工)(#7 余下) | **M2**,报工流程定义时 | 报工工具落地 | 先定义无料工单等合法形态,不默认放行也不误杀 |
-| Todo 模板业务移除(#12 前半) | **M2 收尾** | 真实端点可替代演示时 | 模板遗留;M2 后它是唯一无租户过滤的业务面 |
 | 复合租户外键 (TenantId, Id) + 迁移(#5 完整) | **M4(MCP 对外暴露前)** | 第二个真实租户进系统,或任何外部可写入口上线 | MCP Server 是首个外部写入面;单 default 租户期域内校验已挡主要路径 |
 | Identity 用户-租户 membership(#12 后半) | **M4(MCP 鉴权边界)或鉴权接入时** | 出现第二个用户/租户 | 与 MCP 的租户上下文解析是同一件事 |
 | regex 守卫升级 Roslyn analyzer(#11 完整) | 触发式,无固定里程碑 | 守卫被真实绕过一次 | 生长纪律:等真实事故,不预先镀金 |
 
-**还债进度(2026-07-23,M2 主体 PR)**:跨工单环检测、消耗幂等键、OEE 班次区间、Complete 前置校验四条已还,均有回归测试;Todo 移除待 M2 收尾 PR;其余按表内时机执行。
+**还债进度(2026-07-23)**:跨工单环检测、消耗幂等键、OEE 班次区间、Complete 前置校验、设备事实受控写入、Todo 移除——全部已还,均有回归测试;剩余债项(复合租户外键、Identity membership、Roslyn analyzer、全字段复核、QueryLog 边界、工具 LLM contract)按表内时机执行。
 
 **核实后不改**:Cancel 不回滚消耗(消耗仅限 InProgress、Cancel 仅限开工前,路径互斥,Codex 亦确认);08:00 边界归属正确([start,end) 半开区间)。
 
@@ -87,10 +86,10 @@ Codex CLI 审查原始 PR #2 diff,报 7 bug / 7 风险 / 1 建议。逐条核实
 - [x] FactVerifier 框架重写:规则经 VerificationQueryService(原生 SQL,显式租户条件)复核,与工具 LINQ 管道零共享;篡改结果被独立路径抓出的测试。
 - [x] SqlCaptureInterceptor + IQueryLog:真实执行的 SQL 进作用域日志,供 M3 debug 面板使用;禁止手写 SQL 字符串。
 - [x] Equipment / EquipmentStatusRecord / DowntimeRecord 实体(M1 推迟项),采集事实带 DataSource 来源标记(领域铁律 #5)。
-- [ ] **M2 收尾(下一个 PR)**:DeviceSimulator 移植(写入打 Simulated 标记)+ Todo 模板业务移除。
+- [x] **M2 收尾**:DeviceSimulator 落地(BackgroundService,只走命令入口、Source=Simulated、Aspire 编排随 Web 之后启动);Todo/WeatherForecasts 模板业务全量移除(Domain/Application/Web/测试/种子);设备事实受控命令(SetEquipmentState 关旧开新、RecordDowntime 重叠拒绝、EndDowntime)——债 #11 余下部分还清。
 - 调整:知识库工具组推迟到 M5(向量基建在那里,现在移植是空壳);i18n 双语目录推迟到 M6(当前无用户可见界面文案,工具 DTO 是结构化数据)。
 
-**验收**:每个工具查询有功能测试 + 对应 VerificationRule 且测试含"篡改被抓"路径;`dotnet test` 全绿;grep 不到手写的假 SQL。当前 70/70 绿(收尾两项待办)。
+**验收:✅ M2 关闭(2026-07-23)**——工具查询 + 校验规则 + 篡改测试齐备;三轮 Codex 交叉审查全部处置;模拟器与 Todo 移除完成;60/60 测试全绿(Todo 清除净减 28 条模板测试)。
 
 ## M2 审查跟进(Codex 二审,2026-07-23)
 
@@ -113,7 +112,6 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 | 项 | 推荐修复时机 | 触发条件 |
 | --- | --- | --- |
 | #8 余下:全部展示事实的逐字段复核(明细数量、OEE 分量) | M3,DTO 进入 Agent 答案时 | LLM 开始引用某字段,该字段就必须有校验 |
-| #11 余下:设备事实的受控工厂方法 + 写入侧重叠拒绝 | M2 收尾(模拟器 PR) | 模拟器落地即触发 |
 | #12:QueryLog 工具级边界(checkpoint/关联 ID) | M3,DebugInfo 消费端落地时 | 同一作用域出现多工具调用 |
 | #14:工具 LLM contract(Description/schema/eval)与 HITL | M3 注册时 | 即 AGENTS.md 铁律 #3 的交付时点,口径已在 M2 小节修正 |
 | #13 余下:唯一索引兜底路径的确定性并发测试 | 守卫被真实击中一次时 | 闸门已串行化,该路径为理论后盾 |

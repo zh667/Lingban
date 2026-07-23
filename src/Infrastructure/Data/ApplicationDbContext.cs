@@ -2,7 +2,6 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Lingban.Application.Common.Interfaces;
 using Lingban.Domain.Common;
-using Lingban.Domain.Entities;
 using Lingban.Domain.Entities.Calendar;
 using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
@@ -26,10 +25,6 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
 
     /// <summary>全局租户过滤器引用的当前租户;表达式在查询时对它求值。</summary>
     public string CurrentTenantId => _tenantContext.TenantId;
-
-    public DbSet<TodoList> TodoLists => Set<TodoList>();
-
-    public DbSet<TodoItem> TodoItems => Set<TodoItem>();
 
     public DbSet<Product> Products => Set<Product>();
 

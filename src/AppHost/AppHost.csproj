@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\DeviceSimulator\DeviceSimulator.csproj" />
     <ProjectReference Include="..\Web\Web.csproj" />
   </ItemGroup>
 
