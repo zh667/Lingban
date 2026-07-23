@@ -30,7 +30,7 @@
 - CI 等价检查:restore → build → format verify → test(`.github/workflows/ci.yml`,与上述命令一致)
 - Agent eval(真 LLM + 真库,需 Docker 与 Llm 密钥;CI 无密钥自动跳过):`dotnet test tests/Application.FunctionalTests --filter Category=Eval`
 - UI 真实验证:Playwright(webapp-testing skill;M6 起适用)
-- 前端命令(M6 引入后补):`pnpm install / dev / lint / typecheck / test / build`
+- 前端命令(`web/`,Node 22 + pnpm):`pnpm install / dev / lint / build`;`pnpm gen:api` 从 `web/lib/api/openapi.json` 快照重新生成 REST 类型(刷新快照的步骤见 `web/lib/api/README.md`);`pnpm test:e2e` 跑 Playwright E2E(三件套前置与 `Llm:Mode=scripted` 脚本模型说明见 `web/e2e/README.md`;scripted 仅 Development 可用,非 Development 拒绝启动)。
 
 不得把未执行的命令描述为已通过。
 

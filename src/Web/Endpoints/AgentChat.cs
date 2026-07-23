@@ -10,7 +10,11 @@ namespace Lingban.Web.Endpoints;
 /// </summary>
 public class AgentChat : IEndpointGroup
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    // 枚举一律字符串化:前端按 "Verified"/"Discrepancy" 等语义值分支,数字是隐式契约(E2E 抓获)。
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
 
     // SSE 并发上限(五审遗留债):每用户至多 2 条活跃流,窗口限速管不住慢速长连接。
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ActiveStreams = new();

@@ -249,8 +249,10 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 - [x] 聊天界面本体(`web/app/page.tsx`):登录(Identity bearer)→ SSE 全事件消费(token/tool_result/hitl_pending/answer_audit/error/done)→ 工具卡片(徽章 + 可展开 toolSql/verificationSql)→ HITL 黄铜确认卡 → 审计失败红显。
 - [x] en-US/zh-CN 双目录(`web/lib/i18n.ts`)。
 - [x] `pnpm lint / build` 进 CI(web job)。
-- [ ] OpenAPI 代码生成打通(前端零手写响应类型;SSE 事件载荷不在 OpenAPI 内,REST 请求/响应类型须生成)。
-- [ ] 用 `webapp-testing` skill(Playwright)做关键路径 E2E:登录 → 提问 → 流式回答 → 校验标识可见 → HITL 确认。
+- [x] OpenAPI 代码生成打通(`web/lib/api`:快照 + openapi-typescript 生成,页面 REST 类型全部来自生成物,`satisfies` 钉住请求体;SSE 事件载荷不在 OpenAPI 内,如实手工声明)。
+- [x] 用 `webapp-testing` skill(Playwright)做关键路径 E2E(2 条,全绿):登录 → 提问 → 流式回答 → 已复核徽章 + 绿灯柱 + SQL 分段;报工提议 → 琥珀灯柱 + 确认卡 → 批准 → 已执行。后端跑 `Llm:Mode=scripted`(Development 限定确定性脚本模型,工具/校验/审计/HITL/SSE 全真实路径)——中转站 503 不可用时 E2E 仍可跑,真模型跑法见 `web/e2e/README.md`。
+- E2E 抓获并已修的两个真缺陷:SSE 枚举序列化成数字(前端按 "Verified" 分支全部落入"校验失败")→ JsonStringEnumConverter;React StrictMode 下 setState 更新函数不纯 → 工具卡重复渲染,已改纯函数并加 toHaveCount(1) 回归钉。
+- 范围说明:E2E 在本地跑(需 Docker + dotnet + 浏览器),CI 的 web job 只跑 lint/build;语言切换器未做(双目录已备,当前写死 zh-CN)。
 
 **验收**:E2E 全绿;`pnpm lint / typecheck / test / build` 进 CI。
 

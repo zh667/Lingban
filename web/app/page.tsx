@@ -56,8 +56,9 @@ export default function Home() {
     setToken(tokens.accessToken);
   };
 
-  const patch = (fn: (last: Turn) => void) =>
-    setTurns((prev) => { const next = [...prev]; fn(next[next.length - 1]); return next; });
+  // 更新函数必须纯(StrictMode 双调用):只重建,不原地改。
+  const patch = (fn: (last: Turn) => Turn) =>
+    setTurns((prev) => [...prev.slice(0, -1), fn(prev[prev.length - 1])]);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +78,7 @@ export default function Home() {
         clientMessageId: crypto.randomUUID(),
       } satisfies ChatRequest),
     });
-    if (!res.ok || !res.body) { patch((x) => { x.error = m.streamError; }); setBusy(false); return; }
+    if (!res.ok || !res.body) { patch((x) => ({ ...x, error: m.streamError })); setBusy(false); return; }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -93,11 +94,11 @@ export default function Home() {
         const dataRaw = /^data: (.+)$/m.exec(frame)?.[1];
         if (!ev || !dataRaw) continue;
         const data = JSON.parse(dataRaw);
-        if (ev === "token") patch((x) => { x.text += data.text; });
-        else if (ev === "tool_result") patch((x) => { x.tools.push(data); });
-        else if (ev === "hitl_pending") patch((x) => { x.hitl.push(data); });
-        else if (ev === "answer_audit") patch((x) => { x.audit = data; });
-        else if (ev === "error") patch((x) => { x.error = data.message; });
+        if (ev === "token") patch((x) => ({ ...x, text: x.text + data.text }));
+        else if (ev === "tool_result") patch((x) => ({ ...x, tools: [...x.tools, data] }));
+        else if (ev === "hitl_pending") patch((x) => ({ ...x, hitl: [...x.hitl, data] }));
+        else if (ev === "answer_audit") patch((x) => ({ ...x, audit: data }));
+        else if (ev === "error") patch((x) => ({ ...x, error: data.message }));
         else if (ev === "done") { conversationId.current = data.conversationId; }
       }
     }
@@ -111,11 +112,10 @@ export default function Home() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ approve } satisfies ConfirmRequest),
     });
-    if (res.ok) setTurns((prev) => {
-      const next = [...prev];
-      next[turnIndex].hitl[hitlIndex].state = approve ? "approved" : "rejected";
-      return next;
-    });
+    if (res.ok) setTurns((prev) => prev.map((turn, i) => i !== turnIndex ? turn : {
+      ...turn,
+      hitl: turn.hitl.map((h, j) => j !== hitlIndex ? h : { ...h, state: approve ? "approved" as const : "rejected" as const }),
+    }));
   };
 
   if (!token) {
