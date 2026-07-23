@@ -51,11 +51,7 @@ public class AgentChatServiceTests : TestBase
             .UseFunctionInvocation()
             .Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            scope.ServiceProvider.GetRequiredService<IFactVerifier>(),
-            scope.ServiceProvider.GetRequiredService<IQueryLog>(),
-            scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
 
         return new AgentChatService(
             pipeline,
@@ -179,11 +175,7 @@ public class AgentChatServiceTests : TestBase
         IChatClient client = pipeline.AsBuilder().UseFunctionInvocation().Build(scope2.ServiceProvider);
         var intruder = new AgentChatService(
             client,
-            new AgentToolset(
-                scope2.ServiceProvider.GetRequiredService<ISender>(),
-                scope2.ServiceProvider.GetRequiredService<IFactVerifier>(),
-                scope2.ServiceProvider.GetRequiredService<IQueryLog>(),
-                scope2.ServiceProvider.GetRequiredService<IAgentInvocationClock>()),
+            new AgentToolset(scope2.ServiceProvider.GetRequiredService<MesToolExecutor>()),
             scope2.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope2.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
             new PinnedTimeProvider(T0.AddHours(2)),

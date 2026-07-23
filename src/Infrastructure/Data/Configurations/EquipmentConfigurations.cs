@@ -14,6 +14,7 @@ public class EquipmentConfiguration : IEntityTypeConfiguration<Equipment>
         builder.Property(equipment => equipment.Model).HasMaxLength(128);
 
         builder.HasIndex(equipment => new { equipment.TenantId, equipment.Code }).IsUnique();
+        builder.HasAlternateKey(equipment => new { equipment.TenantId, equipment.Id });
 
         builder.HasOne(equipment => equipment.Workstation)
             .WithMany()
@@ -31,7 +32,8 @@ public class EquipmentStatusRecordConfiguration : IEntityTypeConfiguration<Equip
 
         builder.HasOne(record => record.Equipment)
             .WithMany()
-            .HasForeignKey(record => record.EquipmentId)
+            .HasForeignKey(record => new { record.TenantId, record.EquipmentId })
+            .HasPrincipalKey(equipment => new { equipment.TenantId, equipment.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(record => new { record.TenantId, record.EquipmentId, record.StartUtc });
@@ -54,7 +56,8 @@ public class DowntimeRecordConfiguration : IEntityTypeConfiguration<DowntimeReco
 
         builder.HasOne(record => record.Equipment)
             .WithMany()
-            .HasForeignKey(record => record.EquipmentId)
+            .HasForeignKey(record => new { record.TenantId, record.EquipmentId })
+            .HasPrincipalKey(equipment => new { equipment.TenantId, equipment.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(record => new { record.TenantId, record.EquipmentId, record.StartUtc });

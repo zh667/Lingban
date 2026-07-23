@@ -12,6 +12,7 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
         builder.Property(conversation => conversation.Title).HasMaxLength(64).IsRequired();
         builder.Property(conversation => conversation.OwnerUserId).HasMaxLength(128).IsRequired();
         builder.HasIndex(conversation => new { conversation.TenantId, conversation.OwnerUserId });
+        builder.HasAlternateKey(conversation => new { conversation.TenantId, conversation.Id });
     }
 }
 
@@ -24,7 +25,8 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
 
         builder.HasOne(message => message.Conversation)
             .WithMany(conversation => conversation.Messages)
-            .HasForeignKey(message => message.ConversationId)
+            .HasForeignKey(message => new { message.TenantId, message.ConversationId })
+            .HasPrincipalKey(conversation => new { conversation.TenantId, conversation.Id })
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(message => new { message.TenantId, message.ConversationId });

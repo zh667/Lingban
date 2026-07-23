@@ -177,6 +177,22 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **验收**:本机 Claude Code 配置 `lingban-mes` 后,直接问"今天有几张工单"能得到经校验的真实数据;AGENTS.md 第 10 节登记工具清单。
 
+## M4 审查跟进(Codex 五审,2026-07-23)
+
+五审 5 bug / 5 风险 / 1 建议,全部核实为真。同 PR 修复:
+- #1 租户授权 → MesData 角色策略(Administrator/MesReader)挂上聊天与 /mcp;自注册用户默认无角色读不到数据;完整用户-租户 membership 仍按债表在多租户真实启用时落地。
+- #2 /mcp 限速 → 独立策略 60/分钟,按 NameIdentifier(前缀 user:/ip:)分区。
+- #3 单一实现 → **MesToolExecutor** 内核(参数归一/日期解析/查询/校验编排/SQL 分账/错误分类只此一处);AgentToolset 与 LingbanMesTools 降为薄适配层;工具文案共享常量。
+- #4 协议错误 → MCP 工具返回 CallToolResult,业务错误 IsError=true(测试钉住);来源不明的 InvalidOperationException 收敛为稳定错误码不泄内部信息。
+- #5 复合外键补全 → 质量/设备事实/工序/会话消息全部 (TenantId, Id);**EF 模型级架构测试**枚举全部租户实体外键强制含 TenantId(白名单=三条 SetNull 工位关系)——该守卫首跑即抓出 3 条漏网。
+- #6 stdio 威胁模型写入 AGENTS.md 第 10 节(本机信任、只读角色、连接串卫生)。
+- #7 限速分区改 NameIdentifier + 前缀。
+- #8 429 带 Retry-After 与结构化正文;单轮工具调用预算 MaximumIterationsPerRequest=8;SSE 并发上限留 M6(债)。
+- #9 CancellationToken 贯穿 MCP 工具→MediatR→FactVerifier→EF。
+- #11 只读工具 Idempotent=true。
+
+留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6);SSE 并发流上限(M6);stdio 只读数据库角色(部署期)。
+
 ## 里程碑 5:知识库与真 RAG
 
 **目标**:SOP/维护手册问答,生成与引用都是真的。

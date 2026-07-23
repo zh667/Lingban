@@ -164,11 +164,7 @@ public class AgentEvalTests : TestBase
             .AsIChatClient();
         IChatClient pipeline = inner.AsBuilder().UseFunctionInvocation().Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            scope.ServiceProvider.GetRequiredService<IFactVerifier>(),
-            scope.ServiceProvider.GetRequiredService<IQueryLog>(),
-            scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>());
+        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>());
 
         var service = new AgentChatService(
             pipeline,

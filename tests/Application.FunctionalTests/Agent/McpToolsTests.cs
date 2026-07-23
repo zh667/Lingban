@@ -21,7 +21,9 @@ public class McpToolsTests : TestBase
         });
 
         var tools = new LingbanMesTools(FunctionalTestSetup.ScopeFactory);
-        string json = await tools.GetTodayWorkOrdersAsync();
+        ModelContextProtocol.Protocol.CallToolResult result = await tools.GetTodayWorkOrdersAsync();
+        result.IsError.ShouldNotBe(true);
+        string json = ((ModelContextProtocol.Protocol.TextContentBlock)result.Content[0]).Text;
 
         using JsonDocument document = JsonDocument.Parse(json);
         document.RootElement.GetProperty("verification").GetProperty("status").GetString().ShouldBe("Verified");
@@ -35,10 +37,13 @@ public class McpToolsTests : TestBase
     {
         var tools = new LingbanMesTools(FunctionalTestSetup.ScopeFactory);
 
-        string badDate = await tools.CalculateOeeAsync("EQ-NONE", "2026-02-30");
-        badDate.ShouldContain("yyyy-MM-dd");
+        // 五审 #4:业务错误必须在协议层置 IsError=true。
+        ModelContextProtocol.Protocol.CallToolResult badDate = await tools.CalculateOeeAsync("EQ-NONE", "2026-02-30");
+        badDate.IsError.ShouldBe(true);
+        ((ModelContextProtocol.Protocol.TextContentBlock)badDate.Content[0]).Text.ShouldContain("yyyy-MM-dd");
 
-        string badLine = await tools.AnalyzeDelayedOrdersAsync("不存在的线");
-        badLine.ShouldContain("recoverable");
+        ModelContextProtocol.Protocol.CallToolResult badLine = await tools.AnalyzeDelayedOrdersAsync("不存在的线");
+        badLine.IsError.ShouldBe(true);
+        ((ModelContextProtocol.Protocol.TextContentBlock)badLine.Content[0]).Text.ShouldContain("recoverable");
     }
 }

@@ -16,6 +16,7 @@ public static class AgentDependencyInjection
         builder.Services.Configure<LlmOptions>(builder.Configuration.GetSection(LlmOptions.SectionName));
 
         builder.Services.AddScoped<IAgentInvocationClock, AgentInvocationClock>();
+        builder.Services.AddScoped<MesToolExecutor>();
         builder.Services.AddScoped<AgentToolset>();
         builder.Services.AddScoped<IAgentChatService, AgentChatService>();
 
@@ -42,7 +43,11 @@ public static class AgentDependencyInjection
             // 并行工具调用显式关闭:AgentToolset 事件缓冲、QueryLog 与 scoped DbContext
             // 均按串行设计;开启并行前必须按 CallId 建立独立作用域(四审 #8)。
             return inner.AsBuilder()
-                .UseFunctionInvocation(configure: client => client.AllowConcurrentInvocation = false)
+                .UseFunctionInvocation(configure: client =>
+                {
+                    client.AllowConcurrentInvocation = false;
+                    client.MaximumIterationsPerRequest = 8; // 单轮工具调用预算,防失控循环烧库烧钱
+                })
                 .Build(provider);
         });
     }

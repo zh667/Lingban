@@ -14,6 +14,7 @@ public class DefectTypeConfiguration : IEntityTypeConfiguration<DefectType>
         builder.Property(type => type.Name).HasMaxLength(256).IsRequired();
 
         builder.HasIndex(type => new { type.TenantId, type.Code }).IsUnique();
+        builder.HasAlternateKey(type => new { type.TenantId, type.Id });
     }
 }
 
@@ -26,13 +27,15 @@ public class DefectRecordConfiguration : IEntityTypeConfiguration<DefectRecord>
 
         builder.HasOne(record => record.DefectType)
             .WithMany()
-            .HasForeignKey(record => record.DefectTypeId)
+            .HasForeignKey(record => new { record.TenantId, record.DefectTypeId })
+            .HasPrincipalKey(type => new { type.TenantId, type.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         // 质量记录是审计证据,禁止随主数据级联清除。
         builder.HasOne(record => record.WorkOrder)
             .WithMany()
-            .HasForeignKey(record => record.WorkOrderId)
+            .HasForeignKey(record => new { record.TenantId, record.WorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
@@ -46,12 +49,14 @@ public class QualityInspectionConfiguration : IEntityTypeConfiguration<QualityIn
 
         builder.HasOne(inspection => inspection.WorkOrder)
             .WithMany()
-            .HasForeignKey(inspection => inspection.WorkOrderId)
+            .HasForeignKey(inspection => new { inspection.TenantId, inspection.WorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(inspection => inspection.MaterialLot)
             .WithMany()
-            .HasForeignKey(inspection => inspection.MaterialLotId)
+            .HasForeignKey(inspection => new { inspection.TenantId, inspection.MaterialLotId })
+            .HasPrincipalKey(lot => new { lot.TenantId, lot.Id })
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

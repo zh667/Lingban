@@ -43,9 +43,12 @@ public class ProcessRouteConfiguration : IEntityTypeConfiguration<ProcessRoute>
         builder.Property(route => route.TenantId).HasMaxLength(64).IsRequired();
         builder.Property(route => route.Name).HasMaxLength(256).IsRequired();
 
+        builder.HasAlternateKey(route => new { route.TenantId, route.Id });
+
         builder.HasOne(route => route.Product)
             .WithMany()
-            .HasForeignKey(route => route.ProductId)
+            .HasForeignKey(route => new { route.TenantId, route.ProductId })
+            .HasPrincipalKey(product => new { product.TenantId, product.Id })
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
@@ -61,6 +64,12 @@ public class ProcessStepConfiguration : IEntityTypeConfiguration<ProcessStep>
             .WithMany()
             .HasForeignKey(step => step.WorkstationId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasOne(step => step.ProcessRoute)
+            .WithMany(route => route.Steps)
+            .HasForeignKey(step => new { step.TenantId, step.ProcessRouteId })
+            .HasPrincipalKey(route => new { route.TenantId, route.Id })
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(step => new { step.TenantId, step.ProcessRouteId, step.Sequence }).IsUnique();
     }
@@ -119,7 +128,8 @@ public class WorkOrderOperationConfiguration : IEntityTypeConfiguration<WorkOrde
 
         builder.HasOne(operation => operation.WorkOrder)
             .WithMany(order => order.Operations)
-            .HasForeignKey(operation => operation.WorkOrderId)
+            .HasForeignKey(operation => new { operation.TenantId, operation.WorkOrderId })
+            .HasPrincipalKey(order => new { order.TenantId, order.Id })
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(operation => operation.Workstation)

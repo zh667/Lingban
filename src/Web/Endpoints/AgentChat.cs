@@ -15,7 +15,7 @@ public class AgentChat : IEndpointGroup
     public static void Map(RouteGroupBuilder groupBuilder)
     {
         groupBuilder.MapPost(Chat, "/chat")
-            .RequireAuthorization()
+            .RequireAuthorization("MesData")
             .RequireRateLimiting("agent-chat");
     }
 
