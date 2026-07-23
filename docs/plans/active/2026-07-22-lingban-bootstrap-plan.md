@@ -191,7 +191,7 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 - #9 CancellationToken 贯穿 MCP 工具→MediatR→FactVerifier→EF。
 - #11 只读工具 Idempotent=true。
 
-留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6);SSE 并发流上限(M6);stdio 只读数据库角色(部署期)。
+留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6)——**已还**:stdio 协议冒烟(M4 增量)+ HTTP 线级 401/429/isError(M6,McpHttpWireTests);SSE 并发流上限(M6)——**已还**(每用户 2 路,M6);stdio 只读数据库角色(部署期)。
 
 ## M4 审查跟进(Codex 六审/增量复审,2026-07-23)
 
@@ -236,10 +236,21 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 ## 里程碑 6:操作台(最后做界面)
 
-**目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互)、工单/OEE 看板。
+**目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互),对话为主轴(2026-07-24 拍板),工具结果卡片嵌入对话流;工单/OEE 看板降级为后续增强(决策:对话即产品)。
 
-- [ ] OpenAPI 代码生成打通(前端零手写响应类型);en-US/zh-CN 双目录。
-- [ ] 用 `webapp-testing` skill(Playwright)做关键路径 E2E:登录 → 提问 → 流式回答 → 校验标识可见。
+**开工还债(先清账再施工)**:
+- [x] SSE 并发流上限:每用户 2 路并发,超限 429 `TOO_MANY_STREAMS`,finally 归还。
+- [x] 幂等重试键:ConversationMessage.ClientMessageId,重复键拒绝(回归测试)。
+- [x] MCP HTTP 线级测试(McpHttpWireTests):未鉴权 401;完整 Streamable HTTP 握手 + tools/list + 业务错误 isError=true;限速 429 + Retry-After + RATE_LIMITED 正文。
+- [x] 写操作 + HITL 全链路(铁律 #5):ReportProduction 工具只提议(PendingAction 落库 + hitl_pending 事件,零改动生产数据),确认端点属主校验 + 单次状态机,批准才执行闸门内报工;系统提示禁止声称已执行;四段回归测试(提议不写 → 确认执行 → 重复确认拒 → 非属主 NotFound)。
+
+**施工**:
+- [x] 设计方案 `docs/plans/active/m6-design-plan.md`(安灯语言:深靛夜班底、黄铜铭牌、安灯三色只作语义、助手消息左缘灯柱=本回合最差校验状态)。
+- [x] 聊天界面本体(`web/app/page.tsx`):登录(Identity bearer)→ SSE 全事件消费(token/tool_result/hitl_pending/answer_audit/error/done)→ 工具卡片(徽章 + 可展开 toolSql/verificationSql)→ HITL 黄铜确认卡 → 审计失败红显。
+- [x] en-US/zh-CN 双目录(`web/lib/i18n.ts`)。
+- [x] `pnpm lint / build` 进 CI(web job)。
+- [ ] OpenAPI 代码生成打通(前端零手写响应类型;SSE 事件载荷不在 OpenAPI 内,REST 请求/响应类型须生成)。
+- [ ] 用 `webapp-testing` skill(Playwright)做关键路径 E2E:登录 → 提问 → 流式回答 → 校验标识可见 → HITL 确认。
 
 **验收**:E2E 全绿;`pnpm lint / typecheck / test / build` 进 CI。
 

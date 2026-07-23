@@ -6,6 +6,7 @@ namespace Lingban.Application.FunctionalTests;
 public class FunctionalTestSetup
 {
     internal static IServiceScopeFactory ScopeFactory { get; private set; } = null!;
+    internal static WebApiFactory Factory => _factory!;
     internal static string DatabaseConnectionString { get; private set; } = null!;
     internal static DatabaseResetter? DbResetter { get; private set; }
 
