@@ -39,8 +39,10 @@ public static class AgentDependencyInjection
                 .AsIChatClient();
 
             // FunctionInvokingChatClient 驱动工具循环;工具内部完成钉钟/校验/SQL 分段。
+            // 并行工具调用显式关闭:AgentToolset 事件缓冲、QueryLog 与 scoped DbContext
+            // 均按串行设计;开启并行前必须按 CallId 建立独立作用域(四审 #8)。
             return inner.AsBuilder()
-                .UseFunctionInvocation()
+                .UseFunctionInvocation(configure: client => client.AllowConcurrentInvocation = false)
                 .Build(provider);
         });
     }

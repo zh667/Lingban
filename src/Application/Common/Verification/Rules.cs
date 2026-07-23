@@ -7,10 +7,8 @@ using Lingban.Domain.Services;
 namespace Lingban.Application.Common.Verification;
 
 /// <summary>
-/// 校验规则:时间范围一律从原始工具请求独立推导(不信任 DTO 自报的范围),
-/// 数字经 IVerificationQueryService 的原生 SQL 路径复核。
-/// 请求未钉死 AsOfUtc 时无法复现工具的取值时刻,如实返回 Unverified——
-/// M3 的 Agent 循环调用工具前必须先钉死 AsOfUtc。
+/// 校验规则(四审后字段级版本,债 #8):时间范围与过滤条件一律从原始请求独立推导,
+/// 所有会进入 LLM 上下文的数字字段逐项/逐行复核;请求未钉死 AsOfUtc 时如实返回 Unverified。
 /// </summary>
 public class TodayWorkOrdersVerificationRule : IVerificationRule
 {
@@ -44,23 +42,45 @@ public class TodayWorkOrdersVerificationRule : IVerificationRule
             return UnpinnedAsOf();
         }
 
-        // 生产日与边界全部从请求重推:工具选错生产日或伪造自洽边界都会在此暴露。
+        int? lineId = query.ProductionLineId;
+        if (lineId is null && !string.IsNullOrWhiteSpace(query.ProductionLineCode))
+        {
+            lineId = await _queries.ResolveProductionLineIdByCodeAsync(query.ProductionLineCode, cancellationToken);
+            if (lineId is null)
+            {
+                return new VerificationResult
+                {
+                    Status = VerificationStatus.Discrepancy,
+                    Summary = $"Production line code '{query.ProductionLineCode}' does not resolve to a line."
+                };
+            }
+        }
+
         ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
         DateOnly expectedDate = calendar.GetProductionDate(asOf);
         var (fromUtc, toUtc) = calendar.GetProductionDayBoundsUtc(expectedDate);
 
         TodayWorkOrderCounts actual = await _queries.CountTodayWorkOrdersAsync(
-            fromUtc, toUtc, query.ProductionLineId, cancellationToken);
+            fromUtc, toUtc, lineId, cancellationToken);
+
+        decimal dtoPlanned = dto.Orders.Sum(order => order.PlannedQuantity);
+        decimal dtoCompleted = dto.Orders.Sum(order => order.CompletedQuantity);
+        decimal dtoQualified = dto.Orders.Sum(order => order.QualifiedQuantity);
+        decimal dtoScrap = dto.Orders.Sum(order => order.ScrapQuantity);
 
         return VerificationResult.FromChecks(new[]
         {
             new VerificationCheck("ProductionDate", dto.ProductionDate.ToString("O"), expectedDate.ToString("O"), dto.ProductionDate == expectedDate),
-            new VerificationCheck("ProductionLineId", dto.ProductionLineId?.ToString() ?? "null", query.ProductionLineId?.ToString() ?? "null", dto.ProductionLineId == query.ProductionLineId),
+            new VerificationCheck("ProductionLineId", dto.ProductionLineId?.ToString() ?? "null", lineId?.ToString() ?? "null", dto.ProductionLineId == lineId),
             new VerificationCheck("FromUtc", dto.FromUtc.ToString("O"), fromUtc.ToString("O"), dto.FromUtc == fromUtc),
             new VerificationCheck("ToUtc", dto.ToUtc.ToString("O"), toUtc.ToString("O"), dto.ToUtc == toUtc),
             new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actual.Total.ToString(), dto.TotalCount == actual.Total),
             new VerificationCheck("InProgressCount", dto.InProgressCount.ToString(), actual.InProgress.ToString(), dto.InProgressCount == actual.InProgress),
-            new VerificationCheck("CompletedCount", dto.CompletedCount.ToString(), actual.Completed.ToString(), dto.CompletedCount == actual.Completed)
+            new VerificationCheck("CompletedCount", dto.CompletedCount.ToString(), actual.Completed.ToString(), dto.CompletedCount == actual.Completed),
+            new VerificationCheck("PlannedQuantitySum", dtoPlanned.ToString(), actual.PlannedSum.ToString(), dtoPlanned == actual.PlannedSum),
+            new VerificationCheck("CompletedQuantitySum", dtoCompleted.ToString(), actual.CompletedSum.ToString(), dtoCompleted == actual.CompletedSum),
+            new VerificationCheck("QualifiedQuantitySum", dtoQualified.ToString(), actual.QualifiedSum.ToString(), dtoQualified == actual.QualifiedSum),
+            new VerificationCheck("ScrapQuantitySum", dtoScrap.ToString(), actual.ScrapSum.ToString(), dtoScrap == actual.ScrapSum)
         });
     }
 
@@ -113,16 +133,55 @@ public class DelayedOrdersVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.UnpinnedAsOf();
         }
 
-        IReadOnlyList<int> actualIds = await _queries.GetDelayedWorkOrderIdsAsync(asOf, cancellationToken);
-        string claimedIds = string.Join(",", dto.Orders.Select(order => order.Id).OrderBy(id => id));
-        string actualIdList = string.Join(",", actualIds);
-
-        return VerificationResult.FromChecks(new[]
+        int? lineId = query.ProductionLineId;
+        if (lineId is null && !string.IsNullOrWhiteSpace(query.ProductionLineCode))
         {
-            new VerificationCheck("AsOfUtc", dto.AsOfUtc.ToString("O"), asOf.ToString("O"), dto.AsOfUtc == asOf),
-            new VerificationCheck("TotalCount", dto.TotalCount.ToString(), actualIds.Count.ToString(), dto.TotalCount == actualIds.Count),
-            new VerificationCheck("OrderIds", claimedIds, actualIdList, claimedIds == actualIdList)
-        });
+            lineId = await _queries.ResolveProductionLineIdByCodeAsync(query.ProductionLineCode, cancellationToken);
+            if (lineId is null)
+            {
+                return new VerificationResult
+                {
+                    Status = VerificationStatus.Discrepancy,
+                    Summary = $"Production line code '{query.ProductionLineCode}' does not resolve to a line."
+                };
+            }
+        }
+
+        IReadOnlyList<DelayedOrderRow> rows = await _queries.GetDelayedWorkOrderRowsAsync(asOf, lineId, cancellationToken);
+        var rowById = rows.ToDictionary(row => row.Id);
+
+        var checks = new List<VerificationCheck>
+        {
+            new("AsOfUtc", dto.AsOfUtc.ToString("O"), asOf.ToString("O"), dto.AsOfUtc == asOf),
+            new("ProductionLineId", dto.ProductionLineId?.ToString() ?? "null", lineId?.ToString() ?? "null", dto.ProductionLineId == lineId),
+            new("TotalCount", dto.TotalCount.ToString(), rows.Count.ToString(), dto.TotalCount == rows.Count),
+            new(
+                "OrderIds",
+                string.Join(",", dto.Orders.Select(order => order.Id).OrderBy(id => id)),
+                string.Join(",", rows.Select(row => row.Id)),
+                dto.Orders.Select(order => order.Id).OrderBy(id => id).SequenceEqual(rows.Select(row => row.Id)))
+        };
+
+        // 逐行复核:计划结束/延期小时/数量,每一个都可能进入答案。
+        foreach (DelayedOrderDto order in dto.Orders)
+        {
+            if (!rowById.TryGetValue(order.Id, out DelayedOrderRow? row))
+            {
+                continue; // OrderIds 检查已经抓到集合差异。
+            }
+
+            bool fieldsMatch = order.PlannedEndUtc == row.PlannedEndUtc
+                && order.PlannedQuantity == row.PlannedQuantity
+                && order.CompletedQuantity == row.CompletedQuantity
+                && Math.Abs(order.DelayHours - (asOf - row.PlannedEndUtc).TotalHours) <= 0.01;
+            checks.Add(new VerificationCheck(
+                $"Order[{order.Id}]",
+                $"{order.PlannedEndUtc:O}/{order.DelayHours:0.##}h/{order.PlannedQuantity}/{order.CompletedQuantity}",
+                $"{row.PlannedEndUtc:O}/{(asOf - row.PlannedEndUtc).TotalHours:0.##}h/{row.PlannedQuantity}/{row.CompletedQuantity}",
+                fieldsMatch));
+        }
+
+        return VerificationResult.FromChecks(checks);
     }
 }
 
@@ -156,22 +215,46 @@ public class DefectSummaryVerificationRule : IVerificationRule
         }
 
         DateTimeOffset expectedSince = asOf.AddDays(-query.Days);
-        decimal actual = await _queries.SumDefectQuantityBetweenAsync(expectedSince, asOf, cancellationToken);
-        decimal byTypeSum = dto.ByType.Sum(item => item.Quantity);
+        IReadOnlyList<DefectTypeRow> rows = await _queries.GetDefectTypeRowsAsync(expectedSince, asOf, cancellationToken);
+        decimal actualTotal = rows.Sum(row => row.Quantity);
 
-        return VerificationResult.FromChecks(new[]
+        var checks = new List<VerificationCheck>
         {
-            new VerificationCheck("SinceUtc", dto.SinceUtc.ToString("O"), expectedSince.ToString("O"), dto.SinceUtc == expectedSince),
-            new VerificationCheck("AsOfUtc", dto.AsOfUtc.ToString("O"), asOf.ToString("O"), dto.AsOfUtc == asOf),
-            new VerificationCheck("TotalQuantity", dto.TotalQuantity.ToString(), actual.ToString(), dto.TotalQuantity == actual),
-            new VerificationCheck("ByTypeSum", byTypeSum.ToString(), dto.TotalQuantity.ToString(), byTypeSum == dto.TotalQuantity)
-        });
+            new("SinceUtc", dto.SinceUtc.ToString("O"), expectedSince.ToString("O"), dto.SinceUtc == expectedSince),
+            new("AsOfUtc", dto.AsOfUtc.ToString("O"), asOf.ToString("O"), dto.AsOfUtc == asOf),
+            new("TotalQuantity", dto.TotalQuantity.ToString(), actualTotal.ToString(), dto.TotalQuantity == actualTotal),
+            new(
+                "TypeCodes",
+                string.Join(",", dto.ByType.Select(item => item.Code).OrderBy(code => code)),
+                string.Join(",", rows.Select(row => row.Code)),
+                dto.ByType.Select(item => item.Code).OrderBy(code => code).SequenceEqual(rows.Select(row => row.Code)))
+        };
+
+        var rowByCode = rows.ToDictionary(row => row.Code);
+        foreach (DefectTypeSummaryDto item in dto.ByType)
+        {
+            if (!rowByCode.TryGetValue(item.Code, out DefectTypeRow? row))
+            {
+                continue;
+            }
+
+            double expectedShare = actualTotal > 0 ? (double)(row.Quantity / actualTotal) : 0d;
+            bool match = item.Quantity == row.Quantity && Math.Abs(item.Share - expectedShare) <= 0.0001;
+            checks.Add(new VerificationCheck(
+                $"Type[{item.Code}]",
+                $"{item.Quantity}@{item.Share:0.####}",
+                $"{row.Quantity}@{expectedShare:0.####}",
+                match));
+        }
+
+        return VerificationResult.FromChecks(checks);
     }
 }
 
 public class OeeVerificationRule : IVerificationRule
 {
     private const double MinuteTolerance = 0.01;
+    private const double RatioTolerance = 0.0001;
 
     private readonly IVerificationQueryService _queries;
     private readonly IFactoryCalendarProvider _calendarProvider;
@@ -202,42 +285,73 @@ public class OeeVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.UnpinnedAsOf();
         }
 
-        // 生产日与班次区间从请求 + 日历独立重建;停机复核用同一 asOf 截断。
+        EquipmentProfile? profile = await _queries.GetEquipmentProfileAsync(
+            query.EquipmentId, query.EquipmentCode, cancellationToken);
+        if (profile is null)
+        {
+            return new VerificationResult
+            {
+                Status = VerificationStatus.Discrepancy,
+                Summary = "Equipment in the tool request does not resolve via the independent query path."
+            };
+        }
+
         ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
         DateOnly expectedDate = query.ProductionDate ?? calendar.GetProductionDate(asOf);
         IReadOnlyList<ShiftPeriod> periods = calendar.GetShiftPeriods(expectedDate);
         double plannedMinutes = periods.Sum(period => (period.EndUtc - period.StartUtc).TotalMinutes);
+        DateTimeOffset dayStart = periods.Min(period => period.StartUtc);
+        DateTimeOffset dayEnd = periods.Max(period => period.EndUtc);
 
         double actualDowntime = await _queries.SumDowntimeUnionMinutesAsync(
-            query.EquipmentId,
+            profile.Id,
             periods.Select(period => (period.StartUtc, period.EndUtc)).ToList(),
             asOf,
             cancellationToken);
 
-        double expectedAvailability = dto.PlannedMinutes > 0
-            ? Math.Max(0d, dto.PlannedMinutes - dto.DowntimeMinutes) / dto.PlannedMinutes
-            : 0d;
+        double expectedRunning = Math.Max(0d, plannedMinutes - actualDowntime);
+        double expectedAvailability = plannedMinutes > 0 ? expectedRunning / plannedMinutes : 0d;
+
+        // 派生分量按同一公式独立重算(债 #8:Performance/Quality/Oee 不再只靠 DTO 自证)。
+        double? expectedPerformance = null;
+        double? expectedQuality = null;
+        if (profile.ProductionLineId is int lineId)
+        {
+            LineProductionTotals totals = await _queries.GetLineProductionTotalsAsync(
+                lineId, dayStart, dayEnd, cancellationToken);
+            if (totals.Completed > 0)
+            {
+                expectedQuality = (double)(totals.Qualified / totals.Completed);
+                if (profile.IdealCycleTimeSeconds > 0 && expectedRunning > 0)
+                {
+                    expectedPerformance = (double)totals.Completed * (double)profile.IdealCycleTimeSeconds / 60d
+                        / expectedRunning;
+                }
+            }
+        }
+
+        double? expectedOee = expectedPerformance is not null && expectedQuality is not null
+            ? expectedAvailability * expectedPerformance.Value * expectedQuality.Value
+            : null;
+
+        static bool NullableClose(double? claimed, double? expected) =>
+            claimed is null ? expected is null
+            : expected is not null && Math.Abs(claimed.Value - expected.Value) <= RatioTolerance;
 
         return VerificationResult.FromChecks(new[]
         {
-            new VerificationCheck("EquipmentId", dto.EquipmentId.ToString(), query.EquipmentId.ToString(), dto.EquipmentId == query.EquipmentId),
+            new VerificationCheck("EquipmentId", dto.EquipmentId.ToString(), profile.Id.ToString(), dto.EquipmentId == profile.Id),
+            new VerificationCheck("EquipmentCode", dto.EquipmentCode, profile.Code, dto.EquipmentCode == profile.Code),
             new VerificationCheck("ProductionDate", dto.ProductionDate.ToString("O"), expectedDate.ToString("O"), dto.ProductionDate == expectedDate),
             new VerificationCheck("AsOfUtc", dto.AsOfUtc.ToString("O"), asOf.ToString("O"), dto.AsOfUtc == asOf),
-            new VerificationCheck(
-                "PlannedMinutes",
-                dto.PlannedMinutes.ToString("0.##"),
-                plannedMinutes.ToString("0.##"),
-                Math.Abs(plannedMinutes - dto.PlannedMinutes) <= MinuteTolerance),
-            new VerificationCheck(
-                "DowntimeMinutes",
-                dto.DowntimeMinutes.ToString("0.##"),
-                actualDowntime.ToString("0.##"),
-                Math.Abs(actualDowntime - dto.DowntimeMinutes) <= MinuteTolerance),
-            new VerificationCheck(
-                "Availability",
-                dto.Availability.ToString("0.####"),
-                expectedAvailability.ToString("0.####"),
-                Math.Abs(dto.Availability - expectedAvailability) <= 0.0001)
+            new VerificationCheck("PlannedMinutes", dto.PlannedMinutes.ToString("0.##"), plannedMinutes.ToString("0.##"), Math.Abs(plannedMinutes - dto.PlannedMinutes) <= MinuteTolerance),
+            new VerificationCheck("DowntimeMinutes", dto.DowntimeMinutes.ToString("0.##"), actualDowntime.ToString("0.##"), Math.Abs(actualDowntime - dto.DowntimeMinutes) <= MinuteTolerance),
+            new VerificationCheck("RunningMinutes", dto.RunningMinutes.ToString("0.##"), expectedRunning.ToString("0.##"), Math.Abs(expectedRunning - dto.RunningMinutes) <= MinuteTolerance),
+            new VerificationCheck("Availability", dto.Availability.ToString("0.####"), expectedAvailability.ToString("0.####"), Math.Abs(dto.Availability - expectedAvailability) <= RatioTolerance),
+            new VerificationCheck("Performance", dto.Performance?.ToString("0.####") ?? "null", expectedPerformance?.ToString("0.####") ?? "null", NullableClose(dto.Performance, expectedPerformance)),
+            new VerificationCheck("Quality", dto.Quality?.ToString("0.####") ?? "null", expectedQuality?.ToString("0.####") ?? "null", NullableClose(dto.Quality, expectedQuality)),
+            new VerificationCheck("Oee", dto.Oee?.ToString("0.####") ?? "null", expectedOee?.ToString("0.####") ?? "null", NullableClose(dto.Oee, expectedOee)),
+            new VerificationCheck("Attribution", dto.Attribution, "line-level", dto.Attribution == "line-level")
         });
     }
 }

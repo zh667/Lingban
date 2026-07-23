@@ -13,6 +13,7 @@ using Lingban.Domain.Entities.Quality;
 using Lingban.Domain.Enums;
 using MediatR;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OpenAI;
 
@@ -39,7 +40,14 @@ public class AgentEvalTests : TestBase
             Assert.Ignore("Llm 未配置(user-secrets id: lingban-web);eval 跳过。");
         }
 
-        // 可达性预检:中转站宕机是基础设施问题,不是模型行为问题——Ignore 并注明,不算失败。
+        // 可达性预检(静态缓存,整组只探一次):5xx/超时=基础设施问题→Ignore;
+        // 401/400/402/403/429=配置或额度问题→显式失败,不许伪装成基础设施跳过。
+        if (_preflight is not null)
+        {
+            _preflight.Invoke();
+            return;
+        }
+
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
         http.DefaultRequestHeaders.Authorization = new("Bearer", _llm!.ApiKey);
         string probeJson = JsonSerializer.Serialize(new
@@ -53,16 +61,30 @@ public class AgentEvalTests : TestBase
         {
             using HttpResponseMessage response = await http.PostAsync(
                 _llm.BaseUrl.TrimEnd('/') + "/chat/completions", probe);
-            if (!response.IsSuccessStatusCode)
+            int status = (int)response.StatusCode;
+            if (status is 401 or 400 or 402 or 403 or 429)
             {
-                Assert.Ignore($"LLM 网关不可用(HTTP {(int)response.StatusCode}),eval 跳过——恢复后重跑。");
+                _preflight = () => Assert.Fail($"LLM 配置/额度问题(HTTP {status}),请检查密钥与模型名。");
+            }
+            else if (!response.IsSuccessStatusCode)
+            {
+                _preflight = () => Assert.Ignore($"LLM 网关不可用(HTTP {status}),eval 跳过——恢复后重跑。");
+            }
+            else
+            {
+                _preflight = () => { };
             }
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
         {
-            Assert.Ignore($"LLM 网关不可达({exception.GetType().Name}),eval 跳过——恢复后重跑。");
+            string reason = exception.GetType().Name;
+            _preflight = () => Assert.Ignore($"LLM 网关不可达({reason}),eval 跳过——恢复后重跑。");
         }
+
+        _preflight.Invoke();
     }
+
+    private static Action? _preflight;
 
     [Test]
     [Category("Eval")]
@@ -70,16 +92,20 @@ public class AgentEvalTests : TestBase
     {
         await SeedAsync();
         var events = await RunAsync("今天有几张工单在生产?");
-        AssertToolVerified(events, ToolNames.GetTodayWorkOrders);
+        string answer = AssertToolVerified(events, ToolNames.GetTodayWorkOrders);
+        answer.ShouldContain("1", customMessage: "答案必须引用经校验的数量(1 张在产)");
     }
 
     [Test]
     [Category("Eval")]
-    public async Task DelayedOrdersQuestionSelectsRightToolAndVerifies()
+    public async Task LineFilteredDelayedQuestionSelectsRightToolAndVerifies()
     {
+        // 规划验收原题:"3号线今天延期的工单有哪些?"——不许把 3 当设备 ID,不许混入 1 号线。
         await SeedAsync();
-        var events = await RunAsync("有没有延期的工单?延了多久?");
-        AssertToolVerified(events, ToolNames.AnalyzeDelayedOrders);
+        var events = await RunAsync("3号线延期的工单有哪些?延了多久?");
+        string answer = AssertToolVerified(events, ToolNames.AnalyzeDelayedOrders);
+        answer.ShouldContain("WO-EVAL-LATE-3");
+        answer.ShouldNotContain("WO-EVAL-LATE-1");
     }
 
     [Test]
@@ -88,7 +114,8 @@ public class AgentEvalTests : TestBase
     {
         await SeedAsync();
         var events = await RunAsync("最近一周的质量缺陷情况怎么样?");
-        AssertToolVerified(events, ToolNames.GetDefectSummary);
+        string answer = AssertToolVerified(events, ToolNames.GetDefectSummary);
+        answer.ShouldContain("3", customMessage: "答案必须引用经校验的缺陷数量");
     }
 
     [Test]
@@ -96,12 +123,19 @@ public class AgentEvalTests : TestBase
     public async Task OeeQuestionSelectsRightToolAndVerifies()
     {
         await SeedAsync();
-        var events = await RunAsync($"帮我算一下 {_equipmentId} 号设备今天的 OEE。");
+        var events = await RunAsync("帮我算一下 EQ-EVAL 这台设备今天的 OEE。");
         AssertToolVerified(events, ToolNames.CalculateOee);
     }
 
-    private static void AssertToolVerified(IReadOnlyList<AgentEvent> events, string expectedTool)
+    private static string AssertToolVerified(IReadOnlyList<AgentEvent> events, string expectedTool)
     {
+        // 网关中途断流是基础设施问题(中转抖动),按跳过处理,不误判为模型行为失败。
+        ErrorEvent? streamError = events.OfType<ErrorEvent>().FirstOrDefault();
+        if (streamError is not null)
+        {
+            Assert.Ignore($"模型流中断(网关不稳):{streamError.Message}");
+        }
+
         var toolResults = events.OfType<ToolResultEvent>().ToList();
         toolResults.ShouldContain(
             result => result.ToolName == expectedTool,
@@ -109,8 +143,14 @@ public class AgentEvalTests : TestBase
         toolResults.Where(result => result.ToolName == expectedTool)
             .ShouldAllBe(result => result.Verification.Status == VerificationStatus.Verified);
 
+        // 答案级审计必须通过:数字有出处、无未校验工具。
+        AnswerAuditEvent audit = events.OfType<AnswerAuditEvent>().ShouldHaveSingleItem();
+        audit.Passed.ShouldBeTrue(
+            $"答案审计未通过:未证实数字[{string.Join(",", audit.UnverifiedNumbers)}] 非Verified工具[{string.Join(",", audit.NonVerifiedTools)}]");
+
         string answer = string.Concat(events.OfType<TokenEvent>().Select(token => token.Text));
         answer.ShouldNotBeNullOrWhiteSpace("模型必须产出最终回答");
+        return answer;
     }
 
     private async Task<IReadOnlyList<AgentEvent>> RunAsync(string question)
@@ -175,11 +215,20 @@ public class AgentEvalTests : TestBase
             running.Start(now.AddHours(-1));
             running.ReportProduction(50m, 45m, 3m, 2m);
 
-            var late = WorkOrder.Create("WO-EVAL-LATE", product.Id, line.Id, 20m, "PCS");
-            late.PlannedStartUtc = now.AddDays(-3);
-            late.PlannedEndUtc = now.AddDays(-1);
-            late.Release();
-            context.AddRange(running, late);
+            var line3 = new ProductionLine { Code = "3", Name = "3号线" };
+            var line1 = new ProductionLine { Code = "1", Name = "1号线" };
+            context.AddRange(line3, line1);
+            await context.SaveChangesAsync();
+
+            var late3 = WorkOrder.Create("WO-EVAL-LATE-3", product.Id, line3.Id, 20m, "PCS");
+            late3.PlannedStartUtc = now.AddDays(-3);
+            late3.PlannedEndUtc = now.AddDays(-1);
+            late3.Release();
+            var late1 = WorkOrder.Create("WO-EVAL-LATE-1", product.Id, line1.Id, 30m, "PCS");
+            late1.PlannedStartUtc = now.AddDays(-3);
+            late1.PlannedEndUtc = now.AddDays(-2);
+            late1.Release();
+            context.AddRange(running, late3, late1);
 
             var defectType = new DefectType { Code = "EVAL-DEF", Name = "评估缺陷" };
             context.Add(new DefectRecord
@@ -204,32 +253,18 @@ public class AgentEvalTests : TestBase
         });
     }
 
+    /// <summary>与 Web 同一配置体系:user-secrets(id: lingban-web)+ 环境变量(Llm__ApiKey 等)。</summary>
     private static LlmOptions? TryLoadLlmOptions()
     {
-        string secretsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".microsoft", "usersecrets", "lingban-web", "secrets.json");
-        if (!File.Exists(secretsPath))
-        {
-            return null;
-        }
+        IConfigurationRoot configuration = new ConfigurationBuilder()
+            .AddUserSecrets("lingban-web")
+            .AddEnvironmentVariables()
+            .Build();
 
-        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(secretsPath));
-        string? Get(string key) =>
-            document.RootElement.TryGetProperty(key, out JsonElement value) ? value.GetString() : null;
-
-        string? apiKey = Get("Llm:ApiKey");
-        string? model = Get("Llm:Model");
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(model))
-        {
-            return null;
-        }
-
-        return new LlmOptions
-        {
-            ApiKey = apiKey,
-            Model = model,
-            BaseUrl = Get("Llm:BaseUrl") ?? "https://api.openai.com/v1"
-        };
+        var options = new LlmOptions();
+        configuration.GetSection(LlmOptions.SectionName).Bind(options);
+        return string.IsNullOrWhiteSpace(options.ApiKey) || string.IsNullOrWhiteSpace(options.Model)
+            ? null
+            : options;
     }
 }

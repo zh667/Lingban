@@ -3,6 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Lingban.Web</RootNamespace>
     <AssemblyName>Lingban.Web</AssemblyName>
+    <UserSecretsId>lingban-web</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

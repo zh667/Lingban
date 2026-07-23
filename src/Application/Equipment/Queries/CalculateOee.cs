@@ -26,8 +26,21 @@ public record OeeDto(
 /// Performance/Quality 按设备所在产线的工单四账做产线级归因——这是近似,
 /// Attribution 字段如实标注;拿不到数据时相应分量为 null,OEE 不硬凑。
 /// </summary>
-public record CalculateOeeQuery(int EquipmentId, DateOnly? ProductionDate = null, DateTimeOffset? AsOfUtc = null)
-    : IRequest<OeeDto>;
+public record CalculateOeeQuery(
+    int? EquipmentId = null,
+    DateOnly? ProductionDate = null,
+    DateTimeOffset? AsOfUtc = null,
+    string? EquipmentCode = null) : IRequest<OeeDto>;
+
+public class CalculateOeeQueryValidator : AbstractValidator<CalculateOeeQuery>
+{
+    public CalculateOeeQueryValidator()
+    {
+        RuleFor(query => query)
+            .Must(query => query.EquipmentId is > 0 || !string.IsNullOrWhiteSpace(query.EquipmentCode))
+            .WithMessage("EquipmentId(正整数)或 EquipmentCode 必须提供其一。");
+    }
+}
 
 public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDto>
 {
@@ -48,7 +61,9 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
     public async Task<OeeDto> Handle(CalculateOeeQuery request, CancellationToken cancellationToken)
     {
         var equipment = await _context.Equipment.AsNoTracking()
-            .Where(item => item.Id == request.EquipmentId)
+            .Where(item => request.EquipmentId != null
+                ? item.Id == request.EquipmentId
+                : item.Code == request.EquipmentCode)
             .Select(item => new
             {
                 item.Id,
@@ -57,7 +72,7 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
                 LineId = item.Workstation != null ? (int?)item.Workstation.ProductionLineId : null
             })
             .FirstOrDefaultAsync(cancellationToken);
-        Guard.Against.NotFound(request.EquipmentId, equipment);
+        Guard.Against.NotFound(request.EquipmentCode ?? request.EquipmentId?.ToString() ?? "?", equipment);
 
         ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
         DateTimeOffset asOf = request.AsOfUtc ?? _timeProvider.GetUtcNow();

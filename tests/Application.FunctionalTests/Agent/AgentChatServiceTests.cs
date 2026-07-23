@@ -88,7 +88,9 @@ public class AgentChatServiceTests : TestBase
         ToolResultEvent toolResult = events.OfType<ToolResultEvent>().ShouldHaveSingleItem();
         toolResult.ToolName.ShouldBe(ToolNames.GetTodayWorkOrders);
         toolResult.Verification.Status.ShouldBe(VerificationStatus.Verified);
-        toolResult.ExecutedSql.ShouldNotBeEmpty();
+        toolResult.ToolSql.ShouldNotBeEmpty();
+        toolResult.VerificationSql.ShouldNotBeEmpty();
+        toolResult.CallId.ShouldNotBeNullOrEmpty();
 
         // token 流拼起来 == 最终答案,不许伪造或缺漏。
         string streamed = string.Concat(events.OfType<TokenEvent>().Select(token => token.Text));
@@ -104,6 +106,53 @@ public class AgentChatServiceTests : TestBase
         assistant.ToolResultsJson.ShouldNotBeNull();
         assistant.ToolResultsJson.ShouldContain("SELECT");
         assistant.ToolResultsJson.ShouldContain("Verified");
+    }
+
+    [Test]
+    public async Task AnswerAuditFlagsNumbersNotBackedByVerifiedToolData()
+    {
+        // 四审 #1 的回归钉:工具查到 1 张工单,模型嘴硬说 9 张——审计必须抓住。
+        await SeedFactoryAsync();
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var scripted = new ScriptedChatClient(
+            (ToolNames.GetTodayWorkOrders, "{}"),
+            new[] { "今天有 9 张工单在生产。" });
+        AgentChatService service = CreateService(scope, scripted);
+
+        var events = new List<AgentEvent>();
+        await foreach (AgentEvent agentEvent in service.ChatAsync(null, "今天有几张工单?"))
+        {
+            events.Add(agentEvent);
+        }
+
+        AnswerAuditEvent audit = events.OfType<AnswerAuditEvent>().ShouldHaveSingleItem();
+        audit.Passed.ShouldBeFalse();
+        audit.UnverifiedNumbers.ShouldContain("9");
+    }
+
+    [Test]
+    public async Task InvalidToolDateReturnsStructuredRecoverableError()
+    {
+        // 四审 #5 的回归钉:模型给非法日期,得到含字段与格式的结构化错误而不是断流。
+        await SeedFactoryAsync();
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var scripted = new ScriptedChatClient(
+            (ToolNames.CalculateOee, "{\"equipmentCode\":\"EQ-X\",\"productionDate\":\"2026-02-30\"}"),
+            new[] { "日期无效,请确认。" });
+        AgentChatService service = CreateService(scope, scripted);
+
+        var events = new List<AgentEvent>();
+        await foreach (AgentEvent agentEvent in service.ChatAsync(null, "算一下 EQ-X 在 2026-02-30 的 OEE"))
+        {
+            events.Add(agentEvent);
+        }
+
+        events.OfType<ErrorEvent>().ShouldBeEmpty("参数错误必须可恢复,不许断流");
+        IList<ChatMessage> seen = scripted.LastReceivedMessages.ShouldNotBeNull();
+        string toolFeedback = string.Concat(seen.SelectMany(m => m.Contents).OfType<FunctionResultContent>()
+            .Select(c => c.Result?.ToString() ?? string.Empty));
+        toolFeedback.ShouldContain("productionDate");
+        toolFeedback.ShouldContain("yyyy-MM-dd");
     }
 
     [Test]

@@ -35,15 +35,19 @@ public class AgentChat : IEndpointGroup
             (string eventName, object payload) = agentEvent switch
             {
                 TokenEvent token => ("token", (object)new { text = token.Text }),
-                ToolCallEvent call => ("tool_call", new { tool = call.ToolName, arguments = call.ArgumentsJson }),
+                ToolCallEvent call => ("tool_call", new { callId = call.CallId, tool = call.ToolName, arguments = call.ArgumentsJson }),
                 ToolResultEvent result => ("tool_result", new
                 {
+                    callId = result.CallId,
                     tool = result.ToolName,
                     data = result.Result,
                     verification = result.Verification,
-                    executedSql = result.ExecutedSql,
+                    toolSql = result.ToolSql,
+                    verificationSql = result.VerificationSql,
                     elapsedMs = result.ElapsedMs
                 }),
+                ToolErrorEvent toolError => ("tool_error", new { callId = toolError.CallId, tool = toolError.ToolName, message = toolError.Message }),
+                AnswerAuditEvent auditEvent => ("answer_audit", new { passed = auditEvent.Passed, unverifiedNumbers = auditEvent.UnverifiedNumbers, nonVerifiedTools = auditEvent.NonVerifiedTools }),
                 DoneEvent done => ("done", new { conversationId = done.ConversationId, messageId = done.AssistantMessageId }),
                 ErrorEvent error => ("error", new { message = error.Message }),
                 _ => ("unknown", new { })

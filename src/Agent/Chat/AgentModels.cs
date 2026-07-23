@@ -23,14 +23,28 @@ public abstract record AgentEvent;
 
 public sealed record TokenEvent(string Text) : AgentEvent;
 
-public sealed record ToolCallEvent(string ToolName, string ArgumentsJson) : AgentEvent;
+public sealed record ToolCallEvent(string CallId, string ToolName, string ArgumentsJson) : AgentEvent;
 
 public sealed record ToolResultEvent(
+    string CallId,
     string ToolName,
     object Result,
     VerificationResult Verification,
-    IReadOnlyList<string> ExecutedSql,
+    IReadOnlyList<string> ToolSql,
+    IReadOnlyList<string> VerificationSql,
     long ElapsedMs) : AgentEvent;
+
+public sealed record ToolErrorEvent(string CallId, string ToolName, string Message) : AgentEvent;
+
+/// <summary>
+/// 答案级审计(铁律 #1 的最后一环):流结束后核对最终答案里的数字
+/// 是否都能在"已校验的工具数据"里找到出处;工具有 Discrepancy/Failed 时强制降级。
+/// token 已经流出无法收回,审计结论随 done 前的该事件下发,由 UI/调用方呈现。
+/// </summary>
+public sealed record AnswerAuditEvent(
+    bool Passed,
+    IReadOnlyList<string> UnverifiedNumbers,
+    IReadOnlyList<string> NonVerifiedTools) : AgentEvent;
 
 public sealed record DoneEvent(int ConversationId, int AssistantMessageId) : AgentEvent;
 
