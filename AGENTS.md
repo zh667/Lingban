@@ -28,7 +28,7 @@
 - 单元测试(无 Docker 可跑,分开执行,`dotnet test` 不接受多项目参数):`dotnet test tests/Domain.UnitTests --no-build` 与 `dotnet test tests/Application.UnitTests --no-build`
 - 全量测试(功能/集成,需 Docker):`dotnet test Lingban.slnx --no-build`
 - CI 等价检查:restore → build → format verify → test(`.github/workflows/ci.yml`,与上述命令一致)
-- Agent eval:无(eval 基建建成后更新此行,并同步第 11 节)
+- Agent eval(真 LLM + 真库,需 Docker 与 Llm 密钥;CI 无密钥自动跳过):`dotnet test tests/Application.FunctionalTests --filter Category=Eval`
 - UI 真实验证:Playwright(webapp-testing skill;M6 起适用)
 - 前端命令(M6 引入后补):`pnpm install / dev / lint / typecheck / test / build`
 

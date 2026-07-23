@@ -3,6 +3,7 @@ using System.Reflection;
 using Lingban.Application.Common.Interfaces;
 using Lingban.Domain.Common;
 using Lingban.Domain.Entities.Calendar;
+using Lingban.Domain.Entities.Conversations;
 using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
@@ -59,6 +60,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     public DbSet<EquipmentStatusRecord> EquipmentStatusRecords => Set<EquipmentStatusRecord>();
 
     public DbSet<DowntimeRecord> DowntimeRecords => Set<DowntimeRecord>();
+
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+
+    public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
