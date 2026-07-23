@@ -140,10 +140,9 @@ public class AgentEvalTests : TestBase
         using (var scope = FunctionalTestSetup.ScopeFactory.CreateScope())
         {
             var handler = new Lingban.Application.Knowledge.Commands.IngestDocumentCommandHandler(
-                scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
                 new Lingban.Infrastructure.Knowledge.DocumentParser(),
                 scope.ServiceProvider.GetRequiredService<IEmbeddingService>(),
-                scope.ServiceProvider.GetRequiredService<Lingban.Application.Common.Interfaces.IKnowledgeChunkWriter>());
+                scope.ServiceProvider.GetRequiredService<Lingban.Application.Common.Interfaces.IKnowledgeWriter>());
             byte[] content = await File.ReadAllBytesAsync(
                 Path.Combine(AppContext.BaseDirectory, "Assets", "SOP-连锡缺陷处理规程.docx"));
             await handler.Handle(
@@ -157,7 +156,7 @@ public class AgentEvalTests : TestBase
         var events = await RunAsync("按SOP,连锡缺陷返修用多少度的烙铁?");
         string answer = AssertToolVerified(events, ToolNames.SearchKnowledge);
         answer.ShouldContain("320");
-        answer.ShouldContain("§");
+        answer.ShouldContain("连锡缺陷处理规程§");
         answer.ShouldNotContain("OEE 是 100");
         answer.ShouldNotContain("OEE是100");
     }

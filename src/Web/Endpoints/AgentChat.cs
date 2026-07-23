@@ -49,7 +49,7 @@ public class AgentChat : IEndpointGroup
                     elapsedMs = result.ElapsedMs
                 }),
                 ToolErrorEvent toolError => ("tool_error", new { callId = toolError.CallId, tool = toolError.ToolName, message = toolError.Message }),
-                AnswerAuditEvent auditEvent => ("answer_audit", new { passed = auditEvent.Passed, unverifiedNumbers = auditEvent.UnverifiedNumbers, nonVerifiedTools = auditEvent.NonVerifiedTools }),
+                AnswerAuditEvent auditEvent => ("answer_audit", new { passed = auditEvent.Passed, unverifiedNumbers = auditEvent.UnverifiedNumbers, nonVerifiedTools = auditEvent.NonVerifiedTools, invalidCitations = auditEvent.InvalidCitations }),
                 DoneEvent done => ("done", new { conversationId = done.ConversationId, messageId = done.AssistantMessageId }),
                 ErrorEvent error => ("error", new { message = error.Message }),
                 _ => ("unknown", new { })

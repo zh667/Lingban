@@ -61,8 +61,11 @@ public class FunctionalTestSetup
                 await using var connection = new Npgsql.NpgsqlConnection(connectionString);
                 await connection.OpenAsync(cancellationToken);
                 await using var command = connection.CreateCommand();
+                // 用本次迭代新增的 schema 标记(KnowledgeChunks.Embedding)做就绪信号,旧库残余不会误判。
                 command.CommandText = """
-                    SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'WorkOrders')
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'KnowledgeChunks' AND column_name = 'Embedding')
                     """;
                 if ((bool)(await command.ExecuteScalarAsync(cancellationToken))!)
                 {

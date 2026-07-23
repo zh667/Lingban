@@ -137,13 +137,22 @@ public class VerificationQueryService : IVerificationQueryService
     {
         string tenant = _tenantContext.TenantId;
         List<ChunkRow> rows = await _context.Database.SqlQuery<ChunkRow>($"""
-            SELECT d."Title" AS "DocumentTitle", c."Section", c."Text"
+            SELECT d."Title" AS "DocumentTitle", c."Section", c."Text", (c."Embedding" IS NOT NULL) AS "HasEmbedding"
             FROM "KnowledgeChunks" c
             JOIN "KnowledgeDocuments" d ON d."TenantId" = c."TenantId" AND d."Id" = c."DocumentId"
             WHERE c."TenantId" = {tenant} AND c."Id" = {chunkId}
             """).ToListAsync(cancellationToken);
         ChunkRow? row = rows.SingleOrDefault();
-        return row is null ? null : new KnowledgeChunkRow(row.DocumentTitle, row.Section, row.Text);
+        return row is null ? null : new KnowledgeChunkRow(row.DocumentTitle, row.Section, row.Text, row.HasEmbedding);
+    }
+
+    public async Task<int> CountRetrievableChunksAsync(CancellationToken cancellationToken)
+    {
+        string tenant = _tenantContext.TenantId;
+        return await _context.Database.SqlQuery<int>($"""
+            SELECT COUNT(*)::int AS "Value" FROM "KnowledgeChunks"
+            WHERE "TenantId" = {tenant} AND "Embedding" IS NOT NULL
+            """).SingleAsync(cancellationToken);
     }
 
     public async Task<double> SumDowntimeUnionMinutesAsync(
@@ -223,6 +232,8 @@ public class VerificationQueryService : IVerificationQueryService
         public string Section { get; set; } = string.Empty;
 
         public string Text { get; set; } = string.Empty;
+
+        public bool HasEmbedding { get; set; }
     }
 
     private sealed class CountsRow

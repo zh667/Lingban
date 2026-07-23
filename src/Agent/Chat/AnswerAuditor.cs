@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Lingban.Application.Common.Verification;
+using Lingban.Application.Knowledge.Queries;
 
 namespace Lingban.Agent.Chat;
 
@@ -14,6 +15,8 @@ public static class AnswerAuditor
 {
     private static readonly Regex NumberPattern = new(@"\d+(?:\.\d+)?", RegexOptions.Compiled);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static readonly Regex CitationPattern = new(@"\[([^§\[\]]+)§([^\[\]]+)\]", RegexOptions.Compiled);
 
     public static AnswerAuditEvent Audit(
         string answer,
@@ -40,7 +43,40 @@ public static class AnswerAuditor
         if (string.IsNullOrWhiteSpace(answer))
         {
             // 六审 #7:工具预算耗尽等场景可能产生空答案——空答案不许静默通过审计。
-            return new AnswerAuditEvent(false, new[] { "<EMPTY_ANSWER>" }, nonVerifiedTools);
+            return new AnswerAuditEvent(false, new[] { "<EMPTY_ANSWER>" }, nonVerifiedTools, Array.Empty<string>());
+        }
+
+        // 引用执法(七审 #4):知识检索有命中时,答案必须至少一条 [标题§章节] 引用,
+        // 且每条引用都能对上本轮已校验的命中集合;伪造/缺失引用 = 审计失败。
+        var knowledgeHits = toolResults
+            .Where(result => result.Verification.Status == VerificationStatus.Verified)
+            .Select(result => result.Result)
+            .OfType<KnowledgeSearchResultDto>()
+            .SelectMany(dto => dto.Hits)
+            .ToList();
+        var invalidCitations = new List<string>();
+        if (knowledgeHits.Count > 0)
+        {
+            var citations = CitationPattern.Matches(answer)
+                .Select(match => (Title: match.Groups[1].Value.Trim(), Section: match.Groups[2].Value.Trim()))
+                .ToList();
+            if (citations.Count == 0)
+            {
+                invalidCitations.Add("<MISSING_CITATION>");
+            }
+
+            foreach (var citation in citations)
+            {
+                bool known = knowledgeHits.Any(hit =>
+                    hit.DocumentTitle == citation.Title
+                    && (hit.Section == citation.Section
+                        || hit.Section.Contains(citation.Section, StringComparison.Ordinal)
+                        || citation.Section.Contains(hit.Section, StringComparison.Ordinal)));
+                if (!known)
+                {
+                    invalidCitations.Add($"[{citation.Title}§{citation.Section}]");
+                }
+            }
         }
 
         List<string> unverified = NumberPattern.Matches(answer)
@@ -50,9 +86,10 @@ public static class AnswerAuditor
             .ToList();
 
         return new AnswerAuditEvent(
-            Passed: unverified.Count == 0 && nonVerifiedTools.Count == 0,
+            Passed: unverified.Count == 0 && nonVerifiedTools.Count == 0 && invalidCitations.Count == 0,
             UnverifiedNumbers: unverified,
-            NonVerifiedTools: nonVerifiedTools);
+            NonVerifiedTools: nonVerifiedTools,
+            InvalidCitations: invalidCitations);
     }
 
     private static void CollectNumbers(string text, HashSet<string> allowed)

@@ -35,7 +35,7 @@ public static class DependencyInjection
         builder.Services.AddScoped<IVerificationQueryService, VerificationQueryService>();
         builder.Services.AddSingleton<Lingban.Application.Knowledge.Commands.IDocumentParser, DocumentParser>();
         builder.Services.AddSingleton<IEmbeddingService, OpenAiCompatibleEmbeddingService>();
-        builder.Services.AddScoped<IKnowledgeChunkWriter, KnowledgeChunkWriter>();
+        builder.Services.AddScoped<IKnowledgeWriter, KnowledgeWriter>();
         builder.Services.AddScoped<IKnowledgeSearch, KnowledgeSearch>();
         builder.Services.AddScoped<IFactVerifier, FactVerifier>();
         builder.Services.AddScoped<IVerificationRule, TodayWorkOrdersVerificationRule>();

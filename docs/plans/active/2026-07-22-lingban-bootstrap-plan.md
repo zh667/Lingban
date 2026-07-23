@@ -219,6 +219,21 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **验收**:管道功能测试 3 条全绿(入库→检索→校验/篡改被抓/重入库替换);注入 eval 待 Ollama 拉完模型 + 中转稳定后实跑。
 
+## M5 审查跟进(Codex 七审,2026-07-23)
+
+七审 13 条(6 阻断),全部核实为真,同 PR 修复:
+- #1 原子替换 → IKnowledgeWriter:先解析/分块/全量向量化(计数+维度 fail-fast),后单事务删旧+插新+写向量;失败注入测试证明旧版保留可检索。
+- #2 写权限 → KnowledgeWrite 策略(Administrator/KnowledgeManager);MesReader 上传=403;策略角色矩阵测试。
+- #3 维度契约 → 钉死 1024(删除误导性 EmbeddingDimensions 配置语义),服务/入库双重校验;512 维注入测试。
+- #4 引用执法 → AnswerAuditor 解析 [标题§章节],知识命中时缺引用/伪造引用=审计失败;三态纯函数测试;eval 锚点收紧到具体文档。
+- #5 校验加固 → 空结果如实降 Unverified(阈值语义不可独立复核,库空除外);隐身分块(无向量)/重复 ID/相似度范围与单调性守卫。
+- #6 相关性阈值 → Knowledge:MinSimilarity(默认 0.45)进检索 SQL;无关问题空命中测试。
+- #7 上传:复制前查长度 + RequestSizeLimit 6MB。#8 embedding 分批(64)+ 写入无 N+1(预置 shadow 后单次 SaveChanges)。
+- #9 解析器 → 表格按行入库、标题层级栈生成路径、段落/句子边界切块(硬切仅为兜底)。
+- #10 zip 膨胀防护(条目数/单条目/总解压尺寸)。#11 就绪哨兵改为本次 schema 标记(KnowledgeChunks.Embedding 列)。
+- #12 测试补钉:原子性失败注入、维度不符、空命中、策略矩阵、引用三态。
+- #13 HNSW 索引 → 债:P95 超标或分块过万时加 vector_cosine_ops 索引并验证执行计划。
+
 ## 里程碑 6:操作台(最后做界面)
 
 **目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互)、工单/OEE 看板。

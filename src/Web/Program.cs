@@ -19,8 +19,13 @@ builder.Services.AddMcpServer(options => options.ServerInfo = new() { Name = "li
 
 // 数据访问策略(五审 #1):自注册用户默认无角色,读不到 MES 数据;角色由管理员授予。
 builder.Services.AddAuthorization(options =>
+{
     options.AddPolicy("MesData", policy =>
-        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.MesReader)));
+        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.MesReader));
+    // 知识库写与读分权(七审 #2):MesReader 只能读,投毒面关闭。
+    options.AddPolicy("KnowledgeWrite", policy =>
+        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.KnowledgeManager));
+});
 
 static string RatePartition(HttpContext httpContext) =>
     httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } userId

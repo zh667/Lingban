@@ -4,8 +4,9 @@ using Lingban.Domain.Entities.Knowledge;
 namespace Lingban.Application.Knowledge.Commands;
 
 /// <summary>
-/// 文档入库:解析(基础设施层按扩展名选解析器)→ 分块 → 向量化 → 落库。
-/// 同名文件重新入库 = 全量替换(SOP 有版本语义,旧块必须消失)。
+/// 文档入库(七审 #1 原子语义):解析 → 分块 → 批量向量化(计数与维度 fail-fast)
+/// 全部成功后,才在**单个数据库事务**里替换旧版(删旧 + 插新 + 写向量)。
+/// 任何一步失败,旧版原样保留、可继续检索。
 /// </summary>
 public record IngestDocumentCommand : IRequest<int>
 {
@@ -30,7 +31,7 @@ public class IngestDocumentCommandValidator : AbstractValidator<IngestDocumentCo
 
 public record DocumentSection(string Section, string Text);
 
-/// <summary>按扩展名解析文档为章节序列(docx 用 OpenXml,md/txt 按标题行)。</summary>
+/// <summary>按扩展名解析文档为章节序列(docx 含表格与标题层级路径;md/txt 按标题行)。</summary>
 public interface IDocumentParser
 {
     IReadOnlyList<DocumentSection> Parse(string fileName, byte[] content);
@@ -39,22 +40,20 @@ public interface IDocumentParser
 public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentCommand, int>
 {
     private const int MaxChunkChars = 800;
+    private const int EmbeddingBatchSize = 64;
 
-    private readonly IApplicationDbContext _context;
     private readonly IDocumentParser _parser;
     private readonly IEmbeddingService _embeddings;
-    private readonly IKnowledgeChunkWriter _chunkWriter;
+    private readonly IKnowledgeWriter _writer;
 
     public IngestDocumentCommandHandler(
-        IApplicationDbContext context,
         IDocumentParser parser,
         IEmbeddingService embeddings,
-        IKnowledgeChunkWriter chunkWriter)
+        IKnowledgeWriter writer)
     {
-        _context = context;
         _parser = parser;
         _embeddings = embeddings;
-        _chunkWriter = chunkWriter;
+        _writer = writer;
     }
 
     public async Task<int> Handle(IngestDocumentCommand request, CancellationToken cancellationToken)
@@ -63,15 +62,6 @@ public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentComman
         if (sections.Count == 0)
         {
             throw new InvalidOperationException($"文档 {request.FileName} 没有可入库的内容。");
-        }
-
-        // 同名替换:旧文档与旧块删除(旧 SOP 不允许残留在检索里)。
-        KnowledgeDocument? existing = await _context.KnowledgeDocuments
-            .FirstOrDefaultAsync(document => document.SourceFileName == request.FileName, cancellationToken);
-        if (existing is not null)
-        {
-            _context.KnowledgeDocuments.Remove(existing);
-            await _context.SaveChangesAsync(cancellationToken);
         }
 
         var document = new KnowledgeDocument
@@ -84,7 +74,7 @@ public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentComman
         int sequence = 0;
         foreach (DocumentSection section in sections)
         {
-            foreach (string piece in Split(section.Text))
+            foreach (string piece in SplitByParagraphs(section.Text))
             {
                 var chunk = new KnowledgeChunk
                 {
@@ -98,33 +88,104 @@ public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentComman
             }
         }
 
-        IReadOnlyList<float[]> vectors = await _embeddings.EmbedAsync(
-            chunks.Select(chunk => $"{chunk.Section}\n{chunk.Text}").ToList(), cancellationToken);
-
-        _context.KnowledgeDocuments.Add(document);
-        await _context.SaveChangesAsync(cancellationToken);
-        await _chunkWriter.WriteEmbeddingsAsync(
-            chunks.Select((chunk, index) => (chunk.Id, vectors[index])).ToList(), cancellationToken);
-
-        return document.Id;
-    }
-
-    private static IEnumerable<string> Split(string text)
-    {
-        text = text.Trim();
-        if (text.Length <= MaxChunkChars)
+        // 先算全部向量(分批;计数与维度 fail-fast),数据库在此之前零改动。
+        var vectors = new List<float[]>(chunks.Count);
+        for (int offset = 0; offset < chunks.Count; offset += EmbeddingBatchSize)
         {
-            if (text.Length > 0)
+            List<string> batch = chunks.Skip(offset).Take(EmbeddingBatchSize)
+                .Select(chunk => $"{chunk.Section}\n{chunk.Text}").ToList();
+            IReadOnlyList<float[]> batchVectors = await _embeddings.EmbedAsync(batch, cancellationToken);
+            if (batchVectors.Count != batch.Count)
             {
-                yield return text;
+                throw new InvalidOperationException(
+                    $"Embedding 服务返回 {batchVectors.Count} 条向量,期望 {batch.Count} 条。");
             }
 
-            yield break;
+            foreach (float[] vector in batchVectors)
+            {
+                if (vector.Length != _embeddings.Dimensions)
+                {
+                    throw new InvalidOperationException(
+                        $"Embedding 维度 {vector.Length} 与契约 {_embeddings.Dimensions} 不符;" +
+                        "更换维度需要 schema 迁移与语料重建,不能只改配置。");
+                }
+
+                vectors.Add(vector);
+            }
         }
 
-        for (int index = 0; index < text.Length; index += MaxChunkChars)
+        // 单事务替换:删旧 + 插新 + 写向量,失败整体回滚。
+        return await _writer.ReplaceDocumentAsync(request.FileName, document, vectors, cancellationToken);
+    }
+
+    /// <summary>按段落边界聚合切块(七审 #9):不拦腰截断;单段超长时按句子再退化硬切。</summary>
+    private static IEnumerable<string> SplitByParagraphs(string text)
+    {
+        var buffer = new System.Text.StringBuilder();
+        foreach (string paragraph in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            yield return text.Substring(index, Math.Min(MaxChunkChars, text.Length - index));
+            if (buffer.Length > 0 && buffer.Length + paragraph.Length + 1 > MaxChunkChars)
+            {
+                yield return buffer.ToString();
+                buffer.Clear();
+            }
+
+            if (paragraph.Length <= MaxChunkChars)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Append('\n');
+                }
+
+                buffer.Append(paragraph);
+                continue;
+            }
+
+            if (buffer.Length > 0)
+            {
+                yield return buffer.ToString();
+                buffer.Clear();
+            }
+
+            foreach (string piece in SplitLongParagraph(paragraph))
+            {
+                yield return piece;
+            }
+        }
+
+        if (buffer.Length > 0)
+        {
+            yield return buffer.ToString();
+        }
+    }
+
+    private static IEnumerable<string> SplitLongParagraph(string paragraph)
+    {
+        var buffer = new System.Text.StringBuilder();
+        foreach (string sentence in paragraph.Split('。', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string unit = sentence + "。";
+            if (buffer.Length > 0 && buffer.Length + unit.Length > MaxChunkChars)
+            {
+                yield return buffer.ToString();
+                buffer.Clear();
+            }
+
+            if (unit.Length <= MaxChunkChars)
+            {
+                buffer.Append(unit);
+                continue;
+            }
+
+            for (int index = 0; index < unit.Length; index += MaxChunkChars)
+            {
+                yield return unit.Substring(index, Math.Min(MaxChunkChars, unit.Length - index));
+            }
+        }
+
+        if (buffer.Length > 0)
+        {
+            yield return buffer.ToString();
         }
     }
 }

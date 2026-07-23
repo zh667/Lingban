@@ -44,7 +44,8 @@ public sealed record ToolErrorEvent(string CallId, string ToolName, string Messa
 public sealed record AnswerAuditEvent(
     bool Passed,
     IReadOnlyList<string> UnverifiedNumbers,
-    IReadOnlyList<string> NonVerifiedTools) : AgentEvent;
+    IReadOnlyList<string> NonVerifiedTools,
+    IReadOnlyList<string> InvalidCitations) : AgentEvent;
 
 public sealed record DoneEvent(int ConversationId, int AssistantMessageId) : AgentEvent;
 

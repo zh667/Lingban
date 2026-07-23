@@ -277,16 +277,37 @@ public class KnowledgeSearchVerificationRule : IVerificationRule
             return TodayWorkOrdersVerificationRule.MissingContext(nameof(SearchKnowledgeQuery));
         }
 
+        // 空结果无法独立复核(阈值语义依赖同一 embedding):库里有可检索分块时如实降 Unverified。
+        if (dto.Hits.Count == 0)
+        {
+            int retrievable = await _queries.CountRetrievableChunksAsync(cancellationToken);
+            return retrievable == 0
+                ? VerificationResult.FromChecks(new[] { new VerificationCheck("EmptyKnowledgeBase", "0", "0", true) })
+                : new VerificationResult
+                {
+                    Status = VerificationStatus.Unverified,
+                    Summary = "空检索结果无法独立复核(相关性阈值依赖同一 embedding);知识库并非为空,请谨慎依赖。"
+                };
+        }
+
         var checks = new List<VerificationCheck>
         {
             new("Query", dto.Query, query.Query, dto.Query == query.Query),
-            new("TopK", dto.Hits.Count.ToString(), $"<= {query.TopK}", dto.Hits.Count <= query.TopK)
+            new("TopK", dto.Hits.Count.ToString(), $"<= {query.TopK}", dto.Hits.Count <= query.TopK),
+            new("DistinctChunkIds", dto.Hits.Count.ToString(),
+                dto.Hits.Select(hit => hit.ChunkId).Distinct().Count().ToString(),
+                dto.Hits.Select(hit => hit.ChunkId).Distinct().Count() == dto.Hits.Count),
+            new("SimilarityRange", string.Join(",", dto.Hits.Select(hit => hit.Similarity.ToString("0.###"))),
+                "有限且 [-1, 1] 且非递增",
+                dto.Hits.All(hit => double.IsFinite(hit.Similarity) && hit.Similarity is >= -1 and <= 1.0001)
+                    && dto.Hits.Zip(dto.Hits.Skip(1), (a, b) => a.Similarity >= b.Similarity - 0.0001).All(x => x))
         };
 
         foreach (Application.Common.Interfaces.KnowledgeHit hit in dto.Hits)
         {
             var row = await _queries.GetKnowledgeChunkAsync(hit.ChunkId, cancellationToken);
             bool match = row is not null
+                && row.HasEmbedding
                 && row.Text == hit.Text
                 && row.DocumentTitle == hit.DocumentTitle
                 && row.Section == hit.Section;

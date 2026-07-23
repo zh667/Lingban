@@ -22,10 +22,9 @@ public class KnowledgeTests : TestBase
     private static async Task<int> IngestAsync(IServiceScope scope, string fileName)
     {
         var handler = new IngestDocumentCommandHandler(
-            scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
             new DocumentParser(),
             new FakeEmbeddingService(),
-            scope.ServiceProvider.GetRequiredService<IKnowledgeChunkWriter>());
+            scope.ServiceProvider.GetRequiredService<IKnowledgeWriter>());
         return await handler.Handle(
             new IngestDocumentCommand { FileName = fileName, Content = await File.ReadAllBytesAsync(Asset(fileName)) },
             CancellationToken.None);
@@ -87,6 +86,90 @@ public class KnowledgeTests : TestBase
             .ShouldBeTrue();
     }
 
+    [Test]
+    public async Task FailedReplacementKeepsOldVersionSearchable()
+    {
+        // 七审 #1 回归钉:新版 embedding 失败,旧版必须原样保留可检索。
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        await IngestAsync(scope, "SOP-回流焊作业指导书.docx");
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        int chunkCount = await context.KnowledgeChunks.CountAsync();
+
+        var failingHandler = new IngestDocumentCommandHandler(
+            new DocumentParser(),
+            new ThrowingEmbeddingService(),
+            scope.ServiceProvider.GetRequiredService<IKnowledgeWriter>());
+        byte[] newVersion = await File.ReadAllBytesAsync(Asset("SOP-回流焊作业指导书.docx"));
+        await Should.ThrowAsync<InvalidOperationException>(() => failingHandler.Handle(
+            new IngestDocumentCommand { FileName = "SOP-回流焊作业指导书.docx", Content = newVersion },
+            CancellationToken.None));
+
+        (await context.KnowledgeDocuments.CountAsync()).ShouldBe(1);
+        (await context.KnowledgeChunks.CountAsync()).ShouldBe(chunkCount);
+
+        var searchHandler = new SearchKnowledgeQueryHandler(
+            new FakeEmbeddingService(),
+            scope.ServiceProvider.GetRequiredService<IKnowledgeSearch>());
+        (await searchHandler.Handle(new SearchKnowledgeQuery("回流焊峰值温度", 3), CancellationToken.None))
+            .Hits.ShouldNotBeEmpty();
+    }
+
+    [Test]
+    public async Task WrongDimensionEmbeddingFailsFastBeforeAnyDbChange()
+    {
+        // 七审 #3 回归钉:维度不符 fail-fast,库零改动。
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var handler = new IngestDocumentCommandHandler(
+            new DocumentParser(),
+            new WrongDimensionEmbeddingService(),
+            scope.ServiceProvider.GetRequiredService<IKnowledgeWriter>());
+
+        byte[] content = await File.ReadAllBytesAsync(Asset("SOP-回流焊作业指导书.docx"));
+        var exception = await Should.ThrowAsync<InvalidOperationException>(() => handler.Handle(
+            new IngestDocumentCommand { FileName = "SOP-回流焊作业指导书.docx", Content = content },
+            CancellationToken.None));
+        exception.Message.ShouldContain("维度");
+
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await context.KnowledgeDocuments.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task UnrelatedQueryReturnsEmptyBelowSimilarityThreshold()
+    {
+        // 七审 #6 回归钉:非空知识库里,无关问题必须能得到空命中("知识库没有"可达)。
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        await IngestAsync(scope, "SOP-回流焊作业指导书.docx");
+
+        var searchHandler = new SearchKnowledgeQueryHandler(
+            new FakeEmbeddingService(),
+            scope.ServiceProvider.GetRequiredService<IKnowledgeSearch>());
+        KnowledgeSearchResultDto result = await searchHandler.Handle(
+            new SearchKnowledgeQuery("CNC 液压系统保养要点", 5), CancellationToken.None);
+        result.Hits.ShouldBeEmpty();
+
+        // 空结果如实降 Unverified(知识库非空,阈值语义不可独立复核)。
+        var verifier = scope.ServiceProvider.GetRequiredService<IFactVerifier>();
+        (await verifier.VerifyAsync(ToolNames.SearchKnowledge, new SearchKnowledgeQuery("CNC 液压系统保养要点", 5), result))
+            .Status.ShouldBe(VerificationStatus.Unverified);
+    }
+
+    private sealed class ThrowingEmbeddingService : IEmbeddingService
+    {
+        public int Dimensions => 1024;
+
+        public Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("embedding 服务不可用(测试注入)。");
+    }
+
+    private sealed class WrongDimensionEmbeddingService : IEmbeddingService
+    {
+        public int Dimensions => 1024;
+
+        public Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<float[]>>(texts.Select(_ => new float[512]).ToList());
+    }
+
     /// <summary>确定性 1024 维向量:关键词 → 正交基,检索行为可预测且与真实服务同维。</summary>
     internal sealed class FakeEmbeddingService : IEmbeddingService
     {
@@ -98,7 +181,7 @@ public class KnowledgeTests : TestBase
             IReadOnlyList<float[]> result = texts.Select(text =>
             {
                 var vector = new float[1024];
-                int basis = text.Contains("回流") ? 0 : text.Contains("点检") ? 1 : text.Contains("连锡") ? 2 : 3;
+                int basis = text.Contains("液压") ? 700 : text.Contains("回流") ? 0 : text.Contains("点检") ? 1 : text.Contains("连锡") ? 2 : 3;
                 vector[basis] = 1f;
                 if (text.Contains("峰值"))
                 {
