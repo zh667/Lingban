@@ -12,6 +12,19 @@ builder.AddInfrastructureServices();
 builder.AddAgentServices();
 builder.AddWebServices();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("agent-chat", httpContext =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.Identity?.Name ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromMinutes(1),
+                PermitLimit = 10
+            }));
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -25,6 +38,7 @@ else
     app.UseHsts();
 }
 
+app.UseRateLimiter();
 app.UseHttpsRedirection();
 app.UseCors(static builder =>
     builder.AllowAnyMethod()

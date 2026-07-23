@@ -10,6 +10,8 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
     {
         builder.Property(conversation => conversation.TenantId).HasMaxLength(64).IsRequired();
         builder.Property(conversation => conversation.Title).HasMaxLength(64).IsRequired();
+        builder.Property(conversation => conversation.OwnerUserId).HasMaxLength(128).IsRequired();
+        builder.HasIndex(conversation => new { conversation.TenantId, conversation.OwnerUserId });
     }
 }
 

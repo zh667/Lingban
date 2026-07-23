@@ -175,7 +175,8 @@ public class AgentEvalTests : TestBase
             toolset,
             scope.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
-            TimeProvider.System);
+            TimeProvider.System,
+            new AgentChatServiceTests.FakeUser());
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var events = new List<AgentEvent>();
