@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# GITHUB_TOKEN 最小权限:CI 只需要读代码(CodeQL actions/missing-workflow-permissions)。
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
