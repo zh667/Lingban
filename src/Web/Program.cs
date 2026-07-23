@@ -12,6 +12,11 @@ builder.AddInfrastructureServices();
 builder.AddAgentServices();
 builder.AddWebServices();
 
+// lingban-mes 的 HTTP 暴露(与 stdio 同一工具实现);须携带 Identity bearer。
+builder.Services.AddMcpServer(options => options.ServerInfo = new() { Name = "lingban-mes", Version = "0.4.0" })
+    .WithHttpTransport()
+    .WithTools<Lingban.Agent.Tools.LingbanMesTools>();
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -56,6 +61,7 @@ app.Map("/", () => Results.Redirect("/scalar"));
 
 app.MapDefaultEndpoints();
 app.MapEndpoints(typeof(Program).Assembly);
+app.MapMcp("/mcp").RequireAuthorization();
 
 
 app.Run();

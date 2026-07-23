@@ -91,7 +91,7 @@
 
 ## 10. AI 能力与 harness
 
-- 本项目暴露的 MCP Server:MES 工具集(工单/质量/OEE/知识库)——建成后在此登记入口与工具清单。
+- **MCP Server `lingban-mes` 已建成**(与 Agent 循环共用同一实现):工具 `mes_get_today_work_orders` / `mes_analyze_delayed_orders` / `mes_get_defect_summary` / `mes_calculate_oee`(全部只读,返回数据+校验结论+真实 SQL)。stdio:`dotnet run --project src/McpServer`(连接串经 `ConnectionStrings__LingbanDb` 环境变量);HTTP:Web 的 `/mcp`(需 bearer)。本机接入:`claude mcp add lingban-mes -e ConnectionStrings__LingbanDb="<连接串>" -- dotnet run --project <仓库>/src/McpServer`。
 - 用户级 skills(已装):`mcp-builder`(MCP Server 施工)、`webapp-testing`(UI 验证)、`frontend-design`(操作台视觉设计,新建或改版 UI 前先调用)、`xlsx` / `docx`(报表与 SOP 语料)、`skill-creator`。
 - 计划中的项目级 skill:`mes-domain`(ISA-95 词汇、班次日历、批次谱系不变量)→ 建成后放 `.claude/skills/` 并登记于此。
 

@@ -170,9 +170,10 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **目标**:Lingban 成为 AI 生态里的制造业数据源。
 
-- [ ] 先调用 `mcp-builder` skill,再动工;用官方 MCP C# SDK 把工具集暴露为 `lingban-mes` Server(stdio + HTTP 两种传输)。
-- [ ] 工具实现与进程内 Agent 循环共用同一层,禁止两套逻辑。
-- [ ] 鉴权与租户上下文在 MCP 边界处理。
+- [x] mcp-builder skill 先行;官方 MCP C# SDK(ModelContextProtocol 1.4.1)暴露 `lingban-mes`:stdio(src/McpServer,日志走 stderr)+ HTTP(Web `/mcp`,RequireAuthorization)。
+- [x] 单一实现两处暴露:LingbanMesTools 与 Agent 循环共用同一批 MediatR 查询、FactVerifier、QueryLog;每次调用独立作用域内钉死 AsOf;错误结构化可恢复。
+- [x] M4 债第一批:端点鉴权、会话属主(防枚举回归测试)、复合租户外键(谱系关键关系,库级杜绝跨租户引用)、固定窗口限速;CodeQL 待用户页面一键开启。
+- 命名遵循 MCP 惯例:mes_ 前缀 + snake_case;ReadOnly 注解;工具描述含参数示例。
 
 **验收**:本机 Claude Code 配置 `lingban-mes` 后,直接问"今天有几张工单"能得到经校验的真实数据;AGENTS.md 第 10 节登记工具清单。
 
