@@ -1,26 +1,38 @@
 @import "tailwindcss";
 
+/* 安灯语言 tokens(M6 设计方案):深靛夜班底 + 铭牌黄铜 + 安灯三色语义 */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #171d26;
+  --panel: #1f2733;
+  --panel-2: #242e3d;
+  --text: #e8ecf1;
+  --text-dim: #93a0b1;
+  --brass: #c9a15a;
+  --andon-green: #3fa36c;
+  --andon-amber: #d9a62e;
+  --andon-red: #c4554d;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+html, body { background: var(--bg); color: var(--text); }
+body { font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+.brand { font-family: var(--serif); letter-spacing: 0.08em; color: var(--brass); }
+.andon-green { color: var(--andon-green); }
+.andon-amber { color: var(--andon-amber); }
+.andon-red { color: var(--andon-red); }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+/* 签名元素:助手消息左缘安灯灯柱 */
+.msg-assistant { border-left: 3px solid var(--andon-green); padding-left: 1rem; }
+.msg-assistant[data-andon="amber"] { border-left-color: var(--andon-amber); }
+.msg-assistant[data-andon="red"] { border-left-color: var(--andon-red); }
+
+.tool-card { background: var(--panel); border: 1px solid #2c3747; border-radius: 4px; }
+.tool-card summary { cursor: pointer; }
+.badge { border: 1px solid var(--brass); border-radius: 999px; padding: 0 0.5rem; font-family: var(--mono); font-size: 0.72rem; }
+.hitl-card { border: 1.5px solid var(--brass); border-radius: 4px; background: var(--panel-2); }
+.sql { font-family: var(--mono); font-size: 0.72rem; color: var(--text-dim); overflow-x: auto; white-space: pre; }
+
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
