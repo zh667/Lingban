@@ -44,7 +44,62 @@ public class FunctionalTestSetup
 
         _factory = new WebApiFactory(connectionString);
         ScopeFactory = _factory.Services.GetRequiredService<IServiceScopeFactory>();
-        DbResetter = await DatabaseResetter.CreateAsync(connectionString);
+
+        // WebApplicationFactory(minimal hosting)在 Build() 后即返回,Program 里的
+        // EnsureDeleted/EnsureCreated 在后台线程竞跑——显式等 schema 就绪,不赌时序。
+        await WaitForSchemaAsync(connectionString, cancellationToken);
+        DbResetter = await CreateResetterWithRetryAsync(connectionString, cancellationToken);
+    }
+
+    private static async Task WaitForSchemaAsync(string connectionString, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        while (true)
+        {
+            try
+            {
+                await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+                await connection.OpenAsync(cancellationToken);
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'WorkOrders')
+                    """;
+                if ((bool)(await command.ExecuteScalarAsync(cancellationToken))!)
+                {
+                    return;
+                }
+            }
+            catch (Npgsql.PostgresException)
+            {
+                // 初始化窗口内的 3D000/57P01 等瞬态,继续等。
+            }
+            catch (Npgsql.NpgsqlException)
+            {
+            }
+
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("数据库 schema 在 90 秒内未就绪。");
+            }
+
+            await Task.Delay(500, cancellationToken);
+        }
+    }
+
+    private static async Task<DatabaseResetter> CreateResetterWithRetryAsync(
+        string connectionString, CancellationToken cancellationToken)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await DatabaseResetter.CreateAsync(connectionString);
+            }
+            catch (Npgsql.PostgresException) when (attempt < 4)
+            {
+                await Task.Delay(1000, cancellationToken);
+            }
+        }
     }
 
     [OneTimeTearDown]

@@ -7,4 +7,5 @@ public static class ToolNames
     public const string AnalyzeDelayedOrders = "AnalyzeDelayedOrders";
     public const string GetDefectSummary = "GetDefectSummary";
     public const string CalculateOee = "CalculateOee";
+    public const string SearchKnowledge = "SearchKnowledge";
 }

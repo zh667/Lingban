@@ -1,5 +1,6 @@
 using Lingban.Application.Common.Interfaces;
 using Lingban.Application.Equipment.Queries;
+using Lingban.Application.Knowledge.Queries;
 using Lingban.Application.Production.Queries;
 using Lingban.Application.Quality.Queries;
 using Lingban.Domain.Services;
@@ -244,6 +245,55 @@ public class DefectSummaryVerificationRule : IVerificationRule
                 $"Type[{item.Code}]",
                 $"{item.Quantity}@{item.Share:0.####}",
                 $"{row.Quantity}@{expectedShare:0.####}",
+                match));
+        }
+
+        return VerificationResult.FromChecks(checks);
+    }
+}
+
+/// <summary>
+/// 知识检索校验:每个返回分块的文本与文档标题经独立 SQL 核对(内容完整性);
+/// 相似度排名依赖同一 embedding,无法独立复核——如实降为不校验项,不假装。
+/// </summary>
+public class KnowledgeSearchVerificationRule : IVerificationRule
+{
+    private readonly IVerificationQueryService _queries;
+
+    public KnowledgeSearchVerificationRule(IVerificationQueryService queries) => _queries = queries;
+
+    public bool Supports(string toolName) => toolName == ToolNames.SearchKnowledge;
+
+    public async Task<VerificationResult> VerifyAsync(
+        object toolRequest, object toolResult, CancellationToken cancellationToken)
+    {
+        if (toolResult is not KnowledgeSearchResultDto dto)
+        {
+            return TodayWorkOrdersVerificationRule.Mismatched(nameof(KnowledgeSearchResultDto));
+        }
+
+        if (toolRequest is not SearchKnowledgeQuery query)
+        {
+            return TodayWorkOrdersVerificationRule.MissingContext(nameof(SearchKnowledgeQuery));
+        }
+
+        var checks = new List<VerificationCheck>
+        {
+            new("Query", dto.Query, query.Query, dto.Query == query.Query),
+            new("TopK", dto.Hits.Count.ToString(), $"<= {query.TopK}", dto.Hits.Count <= query.TopK)
+        };
+
+        foreach (Application.Common.Interfaces.KnowledgeHit hit in dto.Hits)
+        {
+            var row = await _queries.GetKnowledgeChunkAsync(hit.ChunkId, cancellationToken);
+            bool match = row is not null
+                && row.Text == hit.Text
+                && row.DocumentTitle == hit.DocumentTitle
+                && row.Section == hit.Section;
+            checks.Add(new VerificationCheck(
+                $"Chunk[{hit.ChunkId}]",
+                $"{hit.DocumentTitle}§{hit.Section}",
+                row is null ? "<不存在>" : $"{row.DocumentTitle}§{row.Section}",
                 match));
         }
 

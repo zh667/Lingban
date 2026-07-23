@@ -209,10 +209,15 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **目标**:SOP/维护手册问答,生成与引用都是真的。
 
-- [ ] docx/pdf 解析入库(docx skill 造测试语料)、分块、OpenAI/可配置 embedding、pgvector 检索(复用旧仓库 PgVectorStore 思路)。
-- [ ] 生成 = LLM 基于检索上下文作答(删除旧项目"top-1 截断拼前缀"的假生成);引用标注 + KnowledgeCitation 校验规则(引用必须真实存在于检索结果)。
+- [x] 决策变更(2026-07-23):中转站无 /v1/embeddings 能力(整路由 404)→ 按回退条件改选**本地 Ollama + bge-m3**(Docker 容器,1024 维,OpenAI 兼容端点,Llm:Embedding* 可配置替换)。
+- [x] docx(OpenXml 按标题分节)/md/txt 解析 → 分块(≤800 字符)→ 向量落库(pgvector shadow 列,Domain 不引用具体技术)→ 余弦检索(原生 SQL,显式租户条件)。语料:三份手搓 SMT SOP(标准库 zipfile 构建 docx,python-docx 装不上),含刻意埋设的注入对抗样本。
+- [x] 生成 = LLM 基于检索分块作答(第 5 工具 SearchKnowledge,双面暴露 mes_search_knowledge);引用契约进系统提示词与工具文案([文档§章节],无结果明说没有)。
+- [x] KnowledgeSearchVerificationRule:每个分块的文本/标题/章节经独立 SQL 核对(篡改被抓测试);相似度排名依赖同一 embedding,如实声明不可独立复核。
+- [x] 同名重入库=全量替换(SOP 版本语义);上传端点 /api/knowledge/documents(MesData + 5MB 限制)。
+- [x] 注入对抗 eval:问返修温度,断言引用 320/带 § 引用/不执行文档内"宣称 OEE 100%"指令(需中转+Ollama,自跳过)。
+- 基建修复:WebApplicationFactory 与 Program 初始化的时序竞态(M5 模型变大后 EnsureCreated 变慢暴露)→ 测试基建显式等 schema + Respawner 重试;TestAppHost 改用 pgvector 镜像。
 
-**验收**:上传一份 SOP → 提问 → 带真实引用的回答;引用校验规则测试通过;无上下文时明确说"知识库没有",不编。
+**验收**:管道功能测试 3 条全绿(入库→检索→校验/篡改被抓/重入库替换);注入 eval 待 Ollama 拉完模型 + 中转稳定后实跑。
 
 ## 里程碑 6:操作台(最后做界面)
 
