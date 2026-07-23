@@ -27,6 +27,7 @@ public static class DependencyInjection
         builder.Services.AddScoped<ISaveChangesInterceptor, AuditableEntityInterceptor>();
         builder.Services.AddScoped<ISaveChangesInterceptor, DispatchDomainEventsInterceptor>();
 
+        builder.Services.AddScoped<IGenealogySerializedExecutor, GenealogySerializedExecutor>();
         builder.Services.AddScoped<IQueryLog, QueryLog>();
         builder.Services.AddScoped<SqlCaptureInterceptor>();
         builder.Services.AddScoped<IFactoryCalendarProvider, FactoryCalendarProvider>();

@@ -92,6 +92,48 @@ Codex CLI 审查原始 PR #2 diff,报 7 bug / 7 风险 / 1 建议。逐条核实
 
 **验收**:每个工具查询有功能测试 + 对应 VerificationRule 且测试含"篡改被抓"路径;`dotnet test` 全绿;grep 不到手写的假 SQL。当前 70/70 绿(收尾两项待办)。
 
+## M2 审查跟进(Codex 二审,2026-07-23)
+
+Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债"还了但成色不足"。处置:
+
+**已修(同 PR 追加提交,均有回归测试):**
+- #1 幂等竞态与键碰撞 → 指纹校验(同键不同 payload 显式拒绝)+ DbUpdateException 兜底复查;并发同键被闸门串行化。
+- #2 环检测 TOCTOU → **IGenealogySerializedExecutor**:租户级 pg_advisory_xact_lock,消耗/产出/完工的"检测+写入"同锁串行;并发反向边测试(恰好一边被拒)。
+- #3 Complete 绕过 → TOCTOU 由闸门解决;裸调用 WorkOrder.Complete() 由架构守卫禁止(白名单:领域/命令/种子)。
+- #4 开放停机 → 截断到 min(AsOf, 日终),不再把未来算成停机;OeeDto 增 AsOfUtc。
+- #5 重叠停机 → 工具与校验路径各自做区间并集(实现独立,数字必须一致)。
+- #6/#7 → 产线过滤进校验 SQL(DTO 携带 ProductionLineId);缺陷校验补 AsOf 上界。
+- #8(部分)→ 规则不再信任 DTO 时间范围,从工厂日历独立重建边界与班次区间;核对字段扩展:Today 五项、Delayed 含 ID 集合、Defect 含分类合计、OEE 含计划分钟与公式一致性(带 clamp)。
+- #9 → CreateWorkOrder 校验 PlannedEnd > PlannedStart、ID 为正。
+- #10 → 消耗校验工位与工单同产线;RecordedBy 长度、ID 正数进 Validator。
+- #11(部分)→ DataSource 加 Unspecified=0 哨兵 + CHECK 约束(Source<>0、End>Start),模拟器忘标来源直接写不进去。
+- #13(部分)→ 新增:空档日历(计划 480 非 540)、重叠停机并集、开放停机截断、并发环竞赛、指纹碰撞、产线过滤校验、缺陷 AsOf、四工具多字段篡改测试。
+
+**缓修(入债表):**
+| 项 | 推荐修复时机 | 触发条件 |
+| --- | --- | --- |
+| #8 余下:全部展示事实的逐字段复核(明细数量、OEE 分量) | M3,DTO 进入 Agent 答案时 | LLM 开始引用某字段,该字段就必须有校验 |
+| #11 余下:设备事实的受控工厂方法 + 写入侧重叠拒绝 | M2 收尾(模拟器 PR) | 模拟器落地即触发 |
+| #12:QueryLog 工具级边界(checkpoint/关联 ID) | M3,DebugInfo 消费端落地时 | 同一作用域出现多工具调用 |
+| #14:工具 LLM contract(Description/schema/eval)与 HITL | M3 注册时 | 即 AGENTS.md 铁律 #3 的交付时点,口径已在 M2 小节修正 |
+| #13 余下:唯一索引兜底路径的确定性并发测试 | 守卫被真实击中一次时 | 闸门已串行化,该路径为理论后盾 |
+
+**口径修正**:M2 交付的是"工具查询内核",非完整 Agent 工具;"每工具四件套"的验收移至 M3 注册时点。
+
+## M2 审查跟进(Codex 三审,2026-07-23)
+
+三审 4 bug / 3 风险,两条列为合并阻断。全部确认为真,处置如下(全部已修,无新增负债):
+
+- #1(阻断)报工未进闸门 → ReportProductionCommand 进 IGenealogySerializedExecutor;"完工 vs 追加报工"并发测试断言不变量(Completed ⇒ 产出=报工)。
+- #2(阻断)WorkOrder 无并发控制 → xmin 乐观并发令牌;未走闸门的 Start/Cancel/Release 并发时后写方冲突,杜绝"带开工时间的已取消工单"。
+- #3 校验仍信任 DTO 范围 → **IFactVerifier 增加 invocation context**:规则接收原始工具请求,生产日/边界/班次区间/AsOf 全部从请求独立重推;请求未钉死 AsOfUtc 时如实返回 Unverified(M3 Agent 循环调用工具前必须钉死 AsOf——此为 M3 设计约束,已记)。新增"工具选错生产日但输出自洽边界被抓"测试。
+- #4 OEE 历史回放 → 已关闭停机同样按 AsOf 截断(工具与校验两侧);历史回放测试(01:00–03:00 记录,as-of 02:00 只见 60 分钟)。
+- #5 指纹缺 RecordedBy → 已纳入。
+- #6 竞争测试非确定性 → 新增闸门互斥性确定测试(T1 持锁期间 T2 不得进入)+ 完工/报工竞态不变量测试;原真并发反向边测试保留。
+- #7 闸门是自愿约定 → 架构守卫扩展:RecordConsumption/ProduceLot 调用点白名单(领域/命令/种子),模拟器届时必须走命令入口。
+
+**四条 M1 债的最终口径(三轮审查后)**:幂等键、跨工单环检测、OEE 班次区间、Complete 前置校验——**已还清**,各有并发/边界回归钉。校验"全字段复核"仍按债表在 M3 随字段进入 Agent 答案逐项补。
+
 ## 里程碑 3:真 Agent 循环(装第二颗心脏)
 
 **目标**:LLM 驱动的工具编排,替代旧项目的关键词 if-else。

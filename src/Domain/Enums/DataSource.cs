@@ -5,7 +5,9 @@ namespace Lingban.Domain.Enums;
 /// </summary>
 public enum DataSource
 {
-    Manual = 0,
-    Device = 1,
-    Simulated = 2
+    /// <summary>未标注——数据库 CHECK 约束拒绝写入,防止默认值冒充真实来源。</summary>
+    Unspecified = 0,
+    Manual = 1,
+    Device = 2,
+    Simulated = 3
 }

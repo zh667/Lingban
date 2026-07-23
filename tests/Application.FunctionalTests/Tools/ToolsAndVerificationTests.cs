@@ -105,11 +105,11 @@ public class ToolsAndVerificationTests : TestBase
         });
     }
 
-    private static async Task<VerificationResult> VerifyAsync(string toolName, object result)
+    private static async Task<VerificationResult> VerifyAsync(string toolName, object request, object result)
     {
         using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
         var verifier = scope.ServiceProvider.GetRequiredService<IFactVerifier>();
-        return await verifier.VerifyAsync(toolName, result);
+        return await verifier.VerifyAsync(toolName, request, result);
     }
 
     [Test]
@@ -117,7 +117,8 @@ public class ToolsAndVerificationTests : TestBase
     {
         await SeedFactoryAsync();
 
-        TodayWorkOrdersDto today = await TestApp.SendAsync(new GetTodayWorkOrdersQuery(AsOfUtc: AsOf));
+        var todayQuery = new GetTodayWorkOrdersQuery(AsOfUtc: AsOf);
+        TodayWorkOrdersDto today = await TestApp.SendAsync(todayQuery);
 
         today.ProductionDate.ShouldBe(new DateOnly(2026, 7, 21));
         today.Orders.Select(order => order.Code)
@@ -125,7 +126,7 @@ public class ToolsAndVerificationTests : TestBase
         today.TotalCount.ShouldBe(2);
         today.InProgressCount.ShouldBe(2);
 
-        VerificationResult verification = await VerifyAsync(ToolNames.GetTodayWorkOrders, today);
+        VerificationResult verification = await VerifyAsync(ToolNames.GetTodayWorkOrders, todayQuery, today);
         verification.Status.ShouldBe(VerificationStatus.Verified);
     }
 
@@ -134,10 +135,11 @@ public class ToolsAndVerificationTests : TestBase
     {
         await SeedFactoryAsync();
 
-        TodayWorkOrdersDto today = await TestApp.SendAsync(new GetTodayWorkOrdersQuery(AsOfUtc: AsOf));
+        var todayQuery = new GetTodayWorkOrdersQuery(AsOfUtc: AsOf);
+        TodayWorkOrdersDto today = await TestApp.SendAsync(todayQuery);
         TodayWorkOrdersDto tampered = today with { TotalCount = today.TotalCount + 5 };
 
-        VerificationResult verification = await VerifyAsync(ToolNames.GetTodayWorkOrders, tampered);
+        VerificationResult verification = await VerifyAsync(ToolNames.GetTodayWorkOrders, todayQuery, tampered);
         verification.Status.ShouldBe(VerificationStatus.Discrepancy);
         verification.Checks.ShouldContain(check => !check.Match);
     }
@@ -147,13 +149,14 @@ public class ToolsAndVerificationTests : TestBase
     {
         await SeedFactoryAsync();
 
-        DelayedOrdersDto delayed = await TestApp.SendAsync(new AnalyzeDelayedOrdersQuery(AsOf));
+        var delayedQuery = new AnalyzeDelayedOrdersQuery(AsOf);
+        DelayedOrdersDto delayed = await TestApp.SendAsync(delayedQuery);
 
         delayed.TotalCount.ShouldBe(1);
         delayed.Orders[0].Code.ShouldBe("WO-LATE");
         delayed.Orders[0].DelayHours.ShouldBe(24d, tolerance: 0.01);
 
-        (await VerifyAsync(ToolNames.AnalyzeDelayedOrders, delayed)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(ToolNames.AnalyzeDelayedOrders, delayedQuery, delayed)).Status.ShouldBe(VerificationStatus.Verified);
     }
 
     [Test]
@@ -161,14 +164,15 @@ public class ToolsAndVerificationTests : TestBase
     {
         await SeedFactoryAsync();
 
-        DefectSummaryDto summary = await TestApp.SendAsync(new GetDefectSummaryQuery(7, AsOf.AddDays(1)));
+        var summaryQuery = new GetDefectSummaryQuery(7, AsOf.AddDays(1));
+        DefectSummaryDto summary = await TestApp.SendAsync(summaryQuery);
 
         summary.TotalQuantity.ShouldBe(10m);
         summary.ByType.Count.ShouldBe(1);
         summary.ByType[0].Code.ShouldBe("SOLDER");
         summary.ByType[0].Share.ShouldBe(1d);
 
-        (await VerifyAsync(ToolNames.GetDefectSummary, summary)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(ToolNames.GetDefectSummary, summaryQuery, summary)).Status.ShouldBe(VerificationStatus.Verified);
     }
 
     [Test]
@@ -176,7 +180,8 @@ public class ToolsAndVerificationTests : TestBase
     {
         await SeedFactoryAsync();
 
-        OeeDto oee = await TestApp.SendAsync(new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21)));
+        var oeeQuery = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero));
+        OeeDto oee = await TestApp.SendAsync(oeeQuery);
 
         oee.PlannedMinutes.ShouldBe(1440d, tolerance: 0.01);
         // 60 分钟白班停机 + 跨边界停机只计入 7-21 内的 30 分钟。
@@ -188,7 +193,77 @@ public class ToolsAndVerificationTests : TestBase
         oee.Oee.ShouldNotBeNull();
         oee.Attribution.ShouldBe("line-level");
 
-        (await VerifyAsync(ToolNames.CalculateOee, oee)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(ToolNames.CalculateOee, oeeQuery, oee)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task LineFilteredTodayQueryVerifiesCorrectly()
+    {
+        // Codex 二审 #6:产线过滤必须进入校验路径,正确结果不得被误判 Discrepancy。
+        await SeedFactoryAsync();
+
+        var filteredQuery = new GetTodayWorkOrdersQuery(_lineId, AsOf);
+        TodayWorkOrdersDto filtered = await TestApp.SendAsync(filteredQuery);
+
+        filtered.TotalCount.ShouldBe(2);
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, filteredQuery, filtered)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task DefectVerificationRespectsAsOfUpperBound()
+    {
+        // Codex 二审 #7:历史回放时,晚于 AsOf 的新记录不得污染校验。
+        await SeedFactoryAsync();
+        DateTimeOffset historicalAsOf = AsOf.AddDays(1);
+
+        var replayQuery = new GetDefectSummaryQuery(7, historicalAsOf);
+        DefectSummaryDto summary = await TestApp.SendAsync(replayQuery);
+        summary.TotalQuantity.ShouldBe(10m);
+
+        await TestApp.ExecuteDbContextAsync(async context =>
+        {
+            var lateType = new Domain.Entities.Quality.DefectType { Code = "LATE", Name = "晚到缺陷" };
+            context.Add(new Domain.Entities.Quality.DefectRecord
+            {
+                DefectType = lateType,
+                Quantity = 99m,
+                RecordedAtUtc = historicalAsOf.AddHours(1)
+            });
+            await context.SaveChangesAsync();
+        });
+
+        (await VerifyAsync(ToolNames.GetDefectSummary, replayQuery, summary)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task TamperedSecondaryFactsAreCaught()
+    {
+        // Codex 二审 #8:不止总数——状态分布、明细 ID、分类合计都要被独立路径钉住。
+        await SeedFactoryAsync();
+
+        var todayQuery = new GetTodayWorkOrdersQuery(AsOfUtc: AsOf);
+        TodayWorkOrdersDto today = await TestApp.SendAsync(todayQuery);
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, todayQuery, today with { InProgressCount = 99 }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, todayQuery, today with { FromUtc = today.FromUtc.AddHours(-8) }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+        // 工具选错生产日但输出自洽边界:规则从请求重推生产日,必须抓到。
+        (await VerifyAsync(ToolNames.GetTodayWorkOrders, todayQuery, today with { ProductionDate = today.ProductionDate.AddDays(-1) }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+
+        var delayedQuery = new AnalyzeDelayedOrdersQuery(AsOf);
+        DelayedOrdersDto delayed = await TestApp.SendAsync(delayedQuery);
+        DelayedOrdersDto delayedTampered = delayed with
+        {
+            Orders = delayed.Orders.Select(order => order with { Id = order.Id + 1000 }).ToList()
+        };
+        (await VerifyAsync(ToolNames.AnalyzeDelayedOrders, delayedQuery, delayedTampered))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
+
+        var summaryQuery = new GetDefectSummaryQuery(7, AsOf.AddDays(1));
+        DefectSummaryDto summary = await TestApp.SendAsync(summaryQuery);
+        (await VerifyAsync(ToolNames.GetDefectSummary, summaryQuery, summary with { TotalQuantity = summary.TotalQuantity + 1 }))
+            .Status.ShouldBe(VerificationStatus.Discrepancy);
     }
 
     [Test]

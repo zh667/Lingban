@@ -1,7 +1,9 @@
+using Lingban.Application.Common.Interfaces;
 using Lingban.Application.WorkOrders.Commands;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
 using Lingban.Domain.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Lingban.Application.FunctionalTests.WorkOrders;
 
@@ -135,6 +137,199 @@ public class WorkOrderWritePathTests : TestBase
         var exception = await Should.ThrowAsync<InvalidOperationException>(
             () => TestApp.SendAsync(cycleAttempt));
         exception.Message.ShouldContain("cycle");
+    }
+
+    [Test]
+    public async Task ReusedEventIdWithDifferentPayloadIsRejected()
+    {
+        // Codex 二审 #1:同键不同 payload 不许被静默当作成功。
+        await SeedMasterDataAsync();
+        int orderId = await CreateStartedOrderAsync("WO-FPRINT");
+        var eventId = Guid.NewGuid();
+
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderId,
+            MaterialLotId = _rawLotId,
+            Quantity = 10m,
+            WorkstationId = _stationId,
+            EventId = eventId
+        });
+
+        var mismatched = new RecordConsumptionCommand
+        {
+            WorkOrderId = orderId,
+            MaterialLotId = _rawLotId,
+            Quantity = 20m,
+            WorkstationId = _stationId,
+            EventId = eventId
+        };
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(
+            () => TestApp.SendAsync(mismatched));
+        exception.Message.ShouldContain("Idempotency");
+    }
+
+    [Test]
+    public async Task ConcurrentReverseEdgesCannotFormCycle()
+    {
+        // Codex 二审 #2:互为反向的两条边并发写入,谱系闸门必须串行化,
+        // 恰好一边成功、另一边被环检测拒绝——事后谱系必须无环。
+        await SeedMasterDataAsync();
+
+        int orderAId = await CreateStartedOrderAsync("WO-RACE-A");
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderAId,
+            MaterialLotId = _rawLotId,
+            Quantity = 5m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        int lotAId = await TestApp.SendAsync(new ProduceLotCommand
+        {
+            WorkOrderId = orderAId,
+            LotNumber = "L-RACE-A",
+            Quantity = 5m
+        });
+
+        int orderBId = await CreateStartedOrderAsync("WO-RACE-B", _rawProductId);
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderBId,
+            MaterialLotId = _rawLotId,
+            Quantity = 5m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        int lotBId = await TestApp.SendAsync(new ProduceLotCommand
+        {
+            WorkOrderId = orderBId,
+            LotNumber = "L-RACE-B",
+            Quantity = 5m
+        });
+
+        // 并发:A 吃 LB,B 吃 LA。
+        Task<int> aEatsB = TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderAId,
+            MaterialLotId = lotBId,
+            Quantity = 1m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        Task<int> bEatsA = TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderBId,
+            MaterialLotId = lotAId,
+            Quantity = 1m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+
+        var failures = new List<Exception>();
+        try { await aEatsB; } catch (Exception exception) { failures.Add(exception); }
+        try { await bEatsA; } catch (Exception exception) { failures.Add(exception); }
+
+        failures.Count.ShouldBe(1, "两条反向边必须恰好一条被拒绝");
+        failures[0].ShouldBeOfType<InvalidOperationException>().Message.ShouldContain("cycle");
+    }
+
+    [Test]
+    public async Task GenealogyExecutorIsMutuallyExclusivePerTenant()
+    {
+        // Codex 三审 #6:确定性互斥测试——T1 持锁期间 T2 不得进入。
+        using var scope1 = FunctionalTestSetup.ScopeFactory.CreateScope();
+        using var scope2 = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var executor1 = scope1.ServiceProvider.GetRequiredService<IGenealogySerializedExecutor>();
+        var executor2 = scope2.ServiceProvider.GetRequiredService<IGenealogySerializedExecutor>();
+
+        var firstEntered = new TaskCompletionSource();
+        var releaseFirst = new TaskCompletionSource();
+        bool secondEntered = false;
+
+        Task first = executor1.ExecuteAsync<object?>(async _ =>
+        {
+            firstEntered.SetResult();
+            await releaseFirst.Task;
+            return null;
+        }, CancellationToken.None);
+
+        await firstEntered.Task;
+
+        Task second = executor2.ExecuteAsync<object?>(_ =>
+        {
+            secondEntered = true;
+            return Task.FromResult<object?>(null);
+        }, CancellationToken.None);
+
+        await Task.Delay(500);
+        secondEntered.ShouldBeFalse("T1 持锁期间 T2 不得进入闸门");
+
+        releaseFirst.SetResult();
+        await first;
+        await second;
+        secondEntered.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ConcurrentCompleteAndReportKeepInvariant()
+    {
+        // Codex 三审 #1:完工校验与改报工量并发,闸门串行化后
+        // 不变量必须成立:Completed 状态 ⇒ 产出总量 == 报工完工量。
+        await SeedMasterDataAsync();
+        int orderId = await CreateStartedOrderAsync("WO-CVR");
+
+        await TestApp.SendAsync(new RecordConsumptionCommand
+        {
+            WorkOrderId = orderId,
+            MaterialLotId = _rawLotId,
+            Quantity = 10m,
+            WorkstationId = _stationId,
+            EventId = Guid.NewGuid()
+        });
+        await TestApp.SendAsync(new ProduceLotCommand
+        {
+            WorkOrderId = orderId,
+            LotNumber = "L-CVR",
+            Quantity = 10m
+        });
+        await TestApp.SendAsync(new ReportProductionCommand
+        {
+            WorkOrderId = orderId,
+            Completed = 10m,
+            Qualified = 10m
+        });
+
+        // 并发:完工 vs 追加报工(+1 会破坏 产出=报工)。
+        Task complete = TestApp.SendAsync(new CompleteWorkOrderCommand(orderId));
+        Task extraReport = TestApp.SendAsync(new ReportProductionCommand
+        {
+            WorkOrderId = orderId,
+            Completed = 1m,
+            Qualified = 1m
+        });
+
+        var failures = new List<Exception>();
+        try { await complete; } catch (Exception exception) { failures.Add(exception); }
+        try { await extraReport; } catch (Exception exception) { failures.Add(exception); }
+
+        var order = await TestApp.FindAsync<WorkOrder>(orderId);
+        order.ShouldNotBeNull();
+
+        if (order.Status == WorkOrderStatus.Completed)
+        {
+            // 完工先赢:追加报工必须被拒(非 InProgress)。
+            order.CompletedQuantity.ShouldBe(10m);
+            failures.Count.ShouldBe(1);
+        }
+        else
+        {
+            // 报工先赢:数量变 11,完工校验必须拒绝(产出 10 ≠ 报工 11)。
+            order.CompletedQuantity.ShouldBe(11m);
+            failures.Count.ShouldBe(1);
+            failures[0].Message.ShouldContain("does not match");
+        }
     }
 
     [Test]

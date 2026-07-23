@@ -36,17 +36,20 @@ public record VerificationResult
 /// <summary>
 /// 事实校验器:对工具结果按注册规则复核。
 /// Agent 铁律 #1:规则的复核查询必须与工具走不同代码路径(见 IVerificationQueryService 的原生 SQL 实现)。
+/// 反"自验自证"(Codex 三审 #3):校验必须拿到原始工具请求(invocation context),
+/// 时间范围从请求独立推导;请求未钉死 AsOfUtc 时如实返回 Unverified。
 /// </summary>
 public interface IFactVerifier
 {
-    Task<VerificationResult> VerifyAsync(string toolName, object toolResult, CancellationToken cancellationToken = default);
+    Task<VerificationResult> VerifyAsync(
+        string toolName, object toolRequest, object toolResult, CancellationToken cancellationToken = default);
 }
 
 public interface IVerificationRule
 {
     bool Supports(string toolName);
 
-    Task<VerificationResult> VerifyAsync(object toolResult, CancellationToken cancellationToken);
+    Task<VerificationResult> VerifyAsync(object toolRequest, object toolResult, CancellationToken cancellationToken);
 }
 
 public class FactVerifier : IFactVerifier
@@ -59,7 +62,7 @@ public class FactVerifier : IFactVerifier
     }
 
     public async Task<VerificationResult> VerifyAsync(
-        string toolName, object toolResult, CancellationToken cancellationToken = default)
+        string toolName, object toolRequest, object toolResult, CancellationToken cancellationToken = default)
     {
         IVerificationRule? rule = _rules.FirstOrDefault(candidate => candidate.Supports(toolName));
         if (rule is null)
@@ -73,7 +76,7 @@ public class FactVerifier : IFactVerifier
 
         try
         {
-            return await rule.VerifyAsync(toolResult, cancellationToken);
+            return await rule.VerifyAsync(toolRequest, toolResult, cancellationToken);
         }
         catch (Exception exception)
         {

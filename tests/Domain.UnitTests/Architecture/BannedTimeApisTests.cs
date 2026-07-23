@@ -26,6 +26,50 @@ public class BannedTimeApisTests
             "禁止 DateTime.Now / DateTime.Today / DateTimeOffset.Now / UtcNow.Date——请传入 DateTimeOffset 或使用 ShiftCalendar。");
     }
 
+    // 完工只许经 CompleteWorkOrderCommand(前置校验 + 谱系闸门)或领域/种子内部调用。
+    private static readonly Regex CompleteBypass = new(@"\.Complete\(", RegexOptions.Compiled);
+
+    private static readonly string[] CompleteAllowedFiles =
+    {
+        "WorkOrder.cs",
+        "ReportAndComplete.cs",
+        "ApplicationDbContextInitialiser.cs"
+    };
+
+    // 消耗/产出必须经命令入口(谱系闸门内);模拟器等新调用方不得绕过。
+    private static readonly Regex GenealogyDomainBypass = new(
+        @"\.RecordConsumption\(|\.ProduceLot\(", RegexOptions.Compiled);
+
+    private static readonly string[] GenealogyDomainAllowedFiles =
+    {
+        "WorkOrder.cs",
+        "RecordConsumption.cs",
+        "ReportAndComplete.cs",
+        "ApplicationDbContextInitialiser.cs"
+    };
+
+    [Test]
+    public void GenealogyDomainMethodsAreOnlyCalledFromGatedEntryPoints()
+    {
+        List<string> offenders = ScanSources(GenealogyDomainBypass)
+            .Where(offender => !GenealogyDomainAllowedFiles.Any(allowed => offender.Contains(allowed)))
+            .ToList();
+
+        offenders.ShouldBeEmpty(
+            "RecordConsumption/ProduceLot 必须经命令入口(谱系闸门内),不得直接调用领域方法。");
+    }
+
+    [Test]
+    public void WorkOrderCompleteIsOnlyCalledFromSanctionedEntryPoints()
+    {
+        List<string> offenders = ScanSources(CompleteBypass)
+            .Where(offender => !CompleteAllowedFiles.Any(allowed => offender.Contains(allowed)))
+            .ToList();
+
+        offenders.ShouldBeEmpty(
+            "WorkOrder.Complete() 绕过完工前置校验;请走 CompleteWorkOrderCommand。");
+    }
+
     [Test]
     public void GenealogyTablesAreOnlyWrittenThroughAggregates()
     {
