@@ -19,6 +19,8 @@ public record LineProductionTotals(decimal Completed, decimal Qualified);
 
 public record KnowledgeChunkRow(string DocumentTitle, string Section, string Text, bool HasEmbedding);
 
+public record PendingActionRow(string OwnerUserId, string ActionType, int Status, string PayloadJson, string Summary);
+
 /// <summary>
 /// 校验专用的独立查询路径:基础设施层用原生 SQL 实现,
 /// 与工具查询的 LINQ 管道不共享任何查询构造代码。
@@ -45,6 +47,8 @@ public interface IVerificationQueryService
     Task<KnowledgeChunkRow?> GetKnowledgeChunkAsync(int chunkId, CancellationToken cancellationToken);
 
     Task<int> CountRetrievableChunksAsync(CancellationToken cancellationToken);
+
+    Task<PendingActionRow?> GetPendingActionAsync(int actionId, CancellationToken cancellationToken);
 
     /// <summary>停机分钟数:原始区间并集(重叠不重复计),开放与越过 clipUtc 的区间都截断,再与班次区间求交。</summary>
     Task<double> SumDowntimeUnionMinutesAsync(

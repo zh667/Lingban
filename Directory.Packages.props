@@ -35,6 +35,7 @@
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
     <PackageVersion Include="Aspire.Npgsql.EntityFrameworkCore.PostgreSQL" Version="13.2.0" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.2.0" />
+    <PackageVersion Include="Npgsql" Version="10.0.2" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.2.0" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.2.0" />

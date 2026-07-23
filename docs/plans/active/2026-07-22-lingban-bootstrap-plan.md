@@ -191,7 +191,7 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 - #9 CancellationToken 贯穿 MCP 工具→MediatR→FactVerifier→EF。
 - #11 只读工具 Idempotent=true。
 
-留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6);SSE 并发流上限(M6);stdio 只读数据库角色(部署期)。
+留债:MCP 协议层自动化测试(握手/tools list/schema/isError/401/限速,触发=首个外部客户端接入前或 M6)——**已还**:stdio 协议冒烟(M4 增量)+ HTTP 线级 401/429/isError(M6,McpHttpWireTests);SSE 并发流上限(M6)——**已还**(每用户 2 路,M6);stdio 只读数据库角色(部署期)。
 
 ## M4 审查跟进(Codex 六审/增量复审,2026-07-23)
 
@@ -236,12 +236,75 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 ## 里程碑 6:操作台(最后做界面)
 
-**目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互)、工单/OEE 看板。
+**目标**:Next.js 前端——chat(真流式 + 校验标识 + HITL 确认交互),对话为主轴(2026-07-24 拍板),工具结果卡片嵌入对话流;工单/OEE 看板降级为后续增强(决策:对话即产品)。
 
-- [ ] OpenAPI 代码生成打通(前端零手写响应类型);en-US/zh-CN 双目录。
-- [ ] 用 `webapp-testing` skill(Playwright)做关键路径 E2E:登录 → 提问 → 流式回答 → 校验标识可见。
+**开工还债(先清账再施工)**:
+- [x] SSE 并发流上限:每用户 2 路并发,超限 429 `TOO_MANY_STREAMS`,finally 归还。
+- [x] 幂等重试键:ConversationMessage.ClientMessageId,重复键拒绝(回归测试)。
+- [x] MCP HTTP 线级测试(McpHttpWireTests):未鉴权 401;完整 Streamable HTTP 握手 + tools/list + 业务错误 isError=true;限速 429 + Retry-After + RATE_LIMITED 正文。
+- [x] 写操作 + HITL 全链路(铁律 #5):ReportProduction 工具只提议(PendingAction 落库 + hitl_pending 事件,零改动生产数据),确认端点属主校验 + 单次状态机,批准才执行闸门内报工;系统提示禁止声称已执行;四段回归测试(提议不写 → 确认执行 → 重复确认拒 → 非属主 NotFound)。
 
-**验收**:E2E 全绿;`pnpm lint / typecheck / test / build` 进 CI。
+**施工**:
+- [x] 设计方案 `docs/plans/active/m6-design-plan.md`(安灯语言:深靛夜班底、黄铜铭牌、安灯三色只作语义、助手消息左缘灯柱=本回合最差校验状态)。
+- [x] 聊天界面本体(`web/app/page.tsx`):登录(Identity bearer)→ SSE 全事件消费(token/tool_result/hitl_pending/answer_audit/error/done)→ 工具卡片(徽章 + 可展开 toolSql/verificationSql)→ HITL 黄铜确认卡 → 审计失败红显。
+- [x] en-US/zh-CN 双目录(`web/lib/i18n.ts`)。
+- [x] `pnpm lint / build` 进 CI(web job)。
+- [x] OpenAPI 代码生成打通(`web/lib/api`:快照 + openapi-typescript 生成,页面 REST 类型全部来自生成物,`satisfies` 钉住请求体;SSE 事件载荷不在 OpenAPI 内,如实手工声明)。
+- [x] 用 `webapp-testing` skill(Playwright)做关键路径 E2E(2 条,全绿):登录 → 提问 → 流式回答 → 已复核徽章 + 绿灯柱 + SQL 分段;报工提议 → 琥珀灯柱 + 确认卡 → 批准 → 已执行。后端跑 `Llm:Mode=scripted`(Development 限定确定性脚本模型,工具/校验/审计/HITL/SSE 全真实路径)——中转站 503 不可用时 E2E 仍可跑,真模型跑法见 `web/e2e/README.md`。
+- E2E 抓获并已修的两个真缺陷:SSE 枚举序列化成数字(前端按 "Verified" 分支全部落入"校验失败")→ JsonStringEnumConverter;React StrictMode 下 setState 更新函数不纯 → 工具卡重复渲染,已改纯函数并加 toHaveCount(1) 回归钉。
+- 范围说明:E2E 在本地跑(需 Docker + dotnet + 浏览器),CI 的 web job 跑 lint/typecheck/build + 生成类型守卫;语言切换器未做(双语目录已备——单文件双 catalog,当前写死 zh-CN)。
+
+**验收**:E2E 全绿;`pnpm lint / typecheck / build` 进 CI(前端暂无单元测试,test 待有非平凡逻辑时补)。
+
+## M6 审查跟进(Codex 八审,2026-07-24)
+
+八审 5 阻断 / 5 应修 / 2 建议,质量极高——双确认双报工与断网 UI 卡死均被真实复现。逐条核验与处置:
+
+**阻断(全部已修,各有回归钉):**
+- #1 HITL 确认非原子(实锤)→ ConfirmPendingActionCommand 整体进谱系闸门:同一 pg_advisory_xact_lock + 单事务内"重读 Pending → 状态检查 → 领域报工 → Approve → 一次 SaveChanges";不再嵌套自带事务的 ReportProductionCommand。后到者重读见非 Pending → ConflictException(HTTP 409)。"报工已提交但动作仍 Pending"的中间态在结构上消失。回归:真并发 approve/approve(恰一次成功,工单 5 不是 10)、approve/reject(终态与生产数据一致性断言)。
+- #2 幂等键 check-then-act + 首次请求重放绕过 → ConversationMessage 增 OwnerUserId,唯一索引 (TenantId, OwnerUserId, ClientMessageId) 数据库强制;预检改按属主(不再依赖会话 ID,null conversationId 重放也拦);SaveChanges 撞索引按重复处理。前端失败回合保留原键,"重试"按钮复用同键。回归:null-conversationId 重放拦下且不多建会话。
+- #3 MesReader 可确认写操作 → 新角色 ProductionReporter + 策略 MesWrite(确认端点);Propose/Confirm 命令层 [Authorize(Roles=Administrator,ProductionReporter)] 第二道闸;AgentToolset 按角色隐藏写工具(无权限用户模型面根本看不到 ReportProduction)。回归:MesReader 走命令层确认 → Forbidden。
+- #4 写工具违反四件套/单一实现 → 提议编排下沉 MesToolExecutor(Agent 面回归薄适配);ToolNames.ReportProduction 登记;新增 ReportProductionProposalVerificationRule(独立 SQL 重读 PendingAction,核对属主/类型/Pending/载荷四账——校验的是"提议已创建未执行"这一事实);新增 eval(报工请求→只提议、答案不得声称已执行、数据零改动)。MCP 面**登记例外**:stdio 无属主身份,HITL 属主确认契约不成立,写暴露入债(见下)。
+- #5 报工未落批次谱系 → **部分驳回 + 入债**:ReportProduction 在本领域模型中是"四账记账信号"(M1 拍板:报废/返工只记账),批次谱系由 ProduceLot/RecordConsumption 落地,且 Complete 闸门强制"有消耗、有产出、产出=报工"——不存在"已完工却无谱系"的成品,召回链在完工时点闭合。审查者要求的"完整生产实绩契约(工位+批次+消耗同一事务)"作为 HITL v2 入债,触发=操作台开放产出/消耗类写操作时。
+
+**应修(已修):**
+- #6 SSE 网络异常 UI 卡死(实锤)→ 全流 try/catch/finally;收到 done/error 才算终结,裸 EOF 判失败;setBusy 在 finally;失败回合红显 + 重试(同幂等键)。
+- #7 SSE 解析不合规范 → 按行状态机:LF/CRLF、多行 data 按规范 \n 拼接、注释行忽略、流尾 flush decoder 与残帧。
+- #8 流上限单进程语义 → 归零条件移除(零值条目不积累);"每实例"语义写入注释与本文;分布式租约入债,触发=第二个实例上线。
+- #9 流未终结即可确认 → 确认按钮 busy 期间禁用(等 done 与审计落定);重复确认 InvalidOperationException → ConflictException → 409(ProblemDetails),前端 409/403/其他分别提示,不再静默吞非 2xx。
+- #10 OpenAPI 无 CI 守卫 → build-and-test job:Production 启动抓运行时契约,归一化 servers 后与快照 diff;web job:pnpm gen:api 后 git diff --exit-code(生成物一致性);typecheck 进 CI。验收口径修正:前端暂无单元测试,如实声明。
+
+**建议(处置):**
+- #11 scripted 守卫有效(审查者实测 Production 拒启)→ 补启动 WARN 日志;页面标识与专用 E2E 宿主记为轻债。
+- #12 脚手架元数据 → 标题/描述/lang 改正;"双目录"表述修正为"双语目录(单文件双 catalog)"。
+
+**新增/更新债项:**
+| 项 | 推荐修复时机 | 触发条件 |
+| --- | --- | --- |
+| MCP 写工具暴露(身份绑定的 HITL 确认契约) | 首个需要写操作的 MCP 客户端出现时 | HTTP /mcp 有 bearer 身份可作属主;stdio 面需先解决身份 |
+| HITL v2:完整生产实绩契约(工位+产出批次+消耗,同一事务) | 操作台开放产出/消耗写操作时 | 出现第二个写工具 |
+| SSE 流上限分布式租约(现为每实例) | 第二个 Web 实例上线前 | 多实例部署 |
+| scripted 模式页面标识 | 下次 UI 批次 | 有人把演示当真实模型能力时提前 |
+| 幂等结果重放状态机(同键返回既有结果) | 需要断点续传/移动端弱网时 | 用户要求"重发不重问" |
+| 前端单测框架 + SSE 协议样本测试 | SSE 解析器再次改动时 | 解析器出现回归 |
+
+## M6 增量复审跟进(Codex 九审,2026-07-24,范围=修复提交 68c95d8)
+
+九审 3 阻断 / 2 应修 / 2 建议;确认上轮 HITL 原子确认修复成立(双确认阻断关闭)。处置:
+
+**阻断(全部已修):**
+- #1 重试与同键拒绝语义冲突(实锤)→ 语义收敛:幂等键只挡"同一次提交"的传输级重复;"重发"=新键的新一次提交(按钮更名"重发"),服务端 error 事件同样保留重发入口。"同键返回既有结果"的幂等状态机(Processing/Completed/Failed + 结果重放)入债,触发=需要断点续传时。
+- #2 DbUpdateException 一律映射 DUPLICATE → 幂等索引显式命名 IX_ConversationMessages_IdempotencyKey(跨层契约),只有 PostgresException 23505 且 ConstraintName 精确匹配才算重复;连接中断/外键冲突/其他唯一索引照常抛出。回归钉:四分支单测(命中/别的唯一索引/外键 23503/非 PG 异常)。
+- #3 校验规则未核对 DTO → 三方逐字段核对:DB↔DTO(模型看到的事实,含 Summary/PayloadJson/四账/工单号/状态)+ 请求↔DB(存储篡改);独立 SQL 增读 Summary。回归钉:DTO 数量/工单号/状态/摘要四种失真均判 Discrepancy。
+- (九审确认关闭:八审 #1 双确认双报工、"已报工但 Pending"中间态。)
+
+**应修(已修):**
+- #4 并发首请求孤儿会话 → 新会话与首条用户消息同一次 SaveChanges(LoadOrCreate 只组装不保存),输家整体回滚。回归钉:真并发同键首请求 → 恰一个会话、一条同键消息、一次 Done、一次 DUPLICATE。
+- #5 ProductionReporter 未落地 → 初始化器补种角色;口径拍板:**写角色隐含读**(报工者必须能看工单),ProductionReporter 进 MesData。回归钉:HTTP 角色矩阵线级测试(MesReader 确认 403;ProductionReporter 单角色确认过闸到 404、/mcp 面不被 401/403)。
+
+**建议(处置):**
+- #6 执行策略未开重试,当前无害;若未来启用 EnableRetryOnFailure,须用 verifySucceeded 重载防"已提交但 Commit 响应丢失"误报——备忘记于此,触发=开启连接重试时。
+- #7 并发测试无 barrier、SSE 解析器无前端单测 → 接受当前置信度并入债:前端单测框架 + SSE 协议样本测试,触发=解析器再次改动时。
 
 ---
 
@@ -261,3 +324,7 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 | 2026-07-22 | M1 建模四决定:离散制造、批次级追溯、工位实记消耗、多租户即刻进模型 | 用户拍板(均采纳推荐);实记保证谱系真实,倒冲的"理论谱系"召回失真 |
 | 2026-07-22 | M1 默认值:Asia/Shanghai 可配、班次是数据(种子双班制)、夜班归开班日、decimal(18,3) 无换算表、报废/返工只记账、单工厂两级层级、SMT 种子场景 | 不值得占用户决策带宽的小项,声明假设后继续 |
 | 2026-07-22 | CodeQL 推迟到 M4 用页面 default setup 开启 | 现在扫模板骨架零产出;MCP Server 出现才有真攻击面;public 仓库免费 |
+| 2026-07-23 | M5 embedding 改选本地 Ollama + bge-m3 | 中转站无 /v1/embeddings 路由;按拍板时声明的回退条件执行 |
+| 2026-07-24 | M6 产品形态:对话为主轴,工具结果卡片嵌入对话流 | 用户拍板;"AI 领班"身份的最强表达,与传统 MES 看板差异化 |
+| 2026-07-24 | M6 引入一个写工具(报工)走通 HITL 全链路 | 用户拍板;铁律 #5 的债一次还清,后续写工具只是加条目 |
+| 2026-07-24 | 角色口径:写角色隐含读(ProductionReporter 进 MesData) | 九审 #5;报工者必须能看工单,单角色即可用;声明假设执行,用户可复议 |

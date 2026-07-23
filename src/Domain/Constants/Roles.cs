@@ -9,4 +9,7 @@ public abstract class Roles
 
     /// <summary>知识库管理角色:上传/替换 SOP 的写权限(七审 #2:读角色不得投毒知识库)。</summary>
     public const string KnowledgeManager = nameof(KnowledgeManager);
+
+    /// <summary>生产写操作角色(八审 #3):报工提议与 HITL 确认的门槛;MesReader 只读,不得改生产数据。</summary>
+    public const string ProductionReporter = nameof(ProductionReporter);
 }

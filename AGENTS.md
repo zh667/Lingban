@@ -30,7 +30,7 @@
 - CI 等价检查:restore → build → format verify → test(`.github/workflows/ci.yml`,与上述命令一致)
 - Agent eval(真 LLM + 真库,需 Docker 与 Llm 密钥;CI 无密钥自动跳过):`dotnet test tests/Application.FunctionalTests --filter Category=Eval`
 - UI 真实验证:Playwright(webapp-testing skill;M6 起适用)
-- 前端命令(M6 引入后补):`pnpm install / dev / lint / typecheck / test / build`
+- 前端命令(`web/`,Node 22 + pnpm):`pnpm install / dev / lint / build`;`pnpm gen:api` 从 `web/lib/api/openapi.json` 快照重新生成 REST 类型(刷新快照的步骤见 `web/lib/api/README.md`);`pnpm test:e2e` 跑 Playwright E2E(三件套前置与 `Llm:Mode=scripted` 脚本模型说明见 `web/e2e/README.md`;scripted 仅 Development 可用,非 Development 拒绝启动)。
 
 不得把未执行的命令描述为已通过。
 
@@ -92,7 +92,7 @@
 
 ## 10. AI 能力与 harness
 
-- **MCP Server `lingban-mes` 已建成**(与 Agent 循环共用同一实现):工具 `mes_get_today_work_orders` / `mes_analyze_delayed_orders` / `mes_get_defect_summary` / `mes_calculate_oee` / `mes_search_knowledge`(全部只读,返回数据+校验结论+真实 SQL)。stdio:`dotnet run --project src/McpServer`(连接串经 `ConnectionStrings__LingbanDb` 环境变量);HTTP:Web 的 `/mcp`(需 bearer)。**stdio 信任模型**:无协议鉴权/属主/限速,信任边界=本机用户与父 MCP 客户端;进程固定使用配置租户;数据库账号应使用只读角色;调用预算由客户端负责;连接串勿写入 shell 历史(用客户端配置文件或环境导入)。本机接入:`claude mcp add lingban-mes -e ConnectionStrings__LingbanDb="<连接串>" -- dotnet run --project <仓库>/src/McpServer`。
+- **MCP Server `lingban-mes` 已建成**(与 Agent 循环共用同一实现):工具 `mes_get_today_work_orders` / `mes_analyze_delayed_orders` / `mes_get_defect_summary` / `mes_calculate_oee` / `mes_search_knowledge`(全部只读,返回数据+校验结论+真实 SQL)。**登记例外(八审 #4)**:写类工具(ReportProduction 提议)暂不经 MCP 暴露——stdio 面没有属主身份,HITL 的"属主确认"契约无法成立;实现仍是单一份(MesToolExecutor),MCP 写暴露待身份绑定的确认契约设计后补(见规划债表)。stdio:`dotnet run --project src/McpServer`(连接串经 `ConnectionStrings__LingbanDb` 环境变量);HTTP:Web 的 `/mcp`(需 bearer)。**stdio 信任模型**:无协议鉴权/属主/限速,信任边界=本机用户与父 MCP 客户端;进程固定使用配置租户;数据库账号应使用只读角色;调用预算由客户端负责;连接串勿写入 shell 历史(用客户端配置文件或环境导入)。本机接入:`claude mcp add lingban-mes -e ConnectionStrings__LingbanDb="<连接串>" -- dotnet run --project <仓库>/src/McpServer`。
 - 用户级 skills(已装):`mcp-builder`(MCP Server 施工)、`webapp-testing`(UI 验证)、`frontend-design`(操作台视觉设计,新建或改版 UI 前先调用)、`xlsx` / `docx`(报表与 SOP 语料)、`skill-creator`。
 - 计划中的项目级 skill:`mes-domain`(ISA-95 词汇、班次日历、批次谱系不变量)→ 建成后放 `.claude/skills/` 并登记于此。
 

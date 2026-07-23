@@ -8,4 +8,5 @@ public static class ToolNames
     public const string GetDefectSummary = "GetDefectSummary";
     public const string CalculateOee = "CalculateOee";
     public const string SearchKnowledge = "SearchKnowledge";
+    public const string ReportProduction = "ReportProduction";
 }

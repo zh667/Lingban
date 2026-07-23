@@ -20,11 +20,19 @@ builder.Services.AddMcpServer(options => options.ServerInfo = new() { Name = "li
 // 数据访问策略(五审 #1):自注册用户默认无角色,读不到 MES 数据;角色由管理员授予。
 builder.Services.AddAuthorization(options =>
 {
+    // 写角色隐含读(九审 #5 口径拍定):报工者必须能看工单才能报工,
+    // ProductionReporter 单角色即可用聊天与只读工具。
     options.AddPolicy("MesData", policy =>
-        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.MesReader));
+        policy.RequireRole(
+            Lingban.Domain.Constants.Roles.Administrator,
+            Lingban.Domain.Constants.Roles.MesReader,
+            Lingban.Domain.Constants.Roles.ProductionReporter));
     // 知识库写与读分权(七审 #2):MesReader 只能读,投毒面关闭。
     options.AddPolicy("KnowledgeWrite", policy =>
         policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.KnowledgeManager));
+    // 生产写分权(八审 #3):MesReader 不得确认报工;写路径要求专门角色。
+    options.AddPolicy("MesWrite", policy =>
+        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.ProductionReporter));
 });
 
 static string RatePartition(HttpContext httpContext) =>

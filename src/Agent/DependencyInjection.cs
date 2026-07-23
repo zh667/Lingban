@@ -5,6 +5,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenAI;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -20,8 +21,32 @@ public static class AgentDependencyInjection
         builder.Services.AddScoped<AgentToolset>();
         builder.Services.AddScoped<IAgentChatService, AgentChatService>();
 
+        // 脚本模型开关(仅 Development;E2E/本地演示在中转站不可用时使用):
+        // 非开发环境配置 scripted 直接拒绝启动,杜绝演示模式流入生产。
+        bool scripted = string.Equals(
+            builder.Configuration["Llm:Mode"], "scripted", StringComparison.OrdinalIgnoreCase);
+        if (scripted && !builder.Environment.IsDevelopment())
+        {
+            throw new InvalidOperationException("Llm:Mode=scripted 仅允许在 Development 环境使用。");
+        }
+
         builder.Services.AddScoped<IChatClient>(provider =>
         {
+            if (scripted)
+            {
+                // 醒目标记(八审 #11):输出是固定台词,不得当作真实模型能力展示。
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
+                    .CreateLogger("Lingban.Agent.ScriptedDevChatClient")
+                    .LogWarning("Llm:Mode=scripted 已启用——模型输出为固定台词(仅限本地 E2E/演示)。");
+                return new ScriptedDevChatClient().AsBuilder()
+                    .UseFunctionInvocation(configure: client =>
+                    {
+                        client.AllowConcurrentInvocation = false;
+                        client.MaximumIterationsPerRequest = 8;
+                    })
+                    .Build(provider);
+            }
+
             var options = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<LlmOptions>>().Value;
             if (string.IsNullOrWhiteSpace(options.ApiKey) || string.IsNullOrWhiteSpace(options.Model))
             {

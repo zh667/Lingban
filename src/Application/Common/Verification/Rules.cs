@@ -426,3 +426,77 @@ public class OeeVerificationRule : IVerificationRule
         });
     }
 }
+
+/// <summary>
+/// 报工提议校验(八审 #4,写工具四件套):独立 SQL 重读 PendingAction,
+/// 逐字段核对"提议已创建且未执行"这一事实——属主、类型、Pending 状态、载荷四账。
+/// 它校验的是提议本身,不是报工结果;报工执行发生在人工确认之后。
+/// </summary>
+public class ReportProductionProposalVerificationRule : IVerificationRule
+{
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private readonly IVerificationQueryService _queries;
+    private readonly IUser _user;
+
+    public ReportProductionProposalVerificationRule(IVerificationQueryService queries, IUser user)
+    {
+        _queries = queries;
+        _user = user;
+    }
+
+    public bool Supports(string toolName) => toolName == ToolNames.ReportProduction;
+
+    public async Task<VerificationResult> VerifyAsync(
+        object toolRequest, object toolResult, CancellationToken cancellationToken)
+    {
+        if (toolResult is not Actions.ReportProductionProposalDto dto)
+        {
+            return TodayWorkOrdersVerificationRule.Mismatched(nameof(Actions.ReportProductionProposalDto));
+        }
+
+        if (toolRequest is not Actions.ProposeReportProductionCommand command)
+        {
+            return TodayWorkOrdersVerificationRule.MissingContext(nameof(Actions.ProposeReportProductionCommand));
+        }
+
+        PendingActionRow? row = await _queries.GetPendingActionAsync(dto.ActionId, cancellationToken);
+        if (row is null)
+        {
+            return new VerificationResult
+            {
+                Status = VerificationStatus.Discrepancy,
+                Summary = $"挂起动作 #{dto.ActionId} 在独立查询路径中不存在。"
+            };
+        }
+
+        var stored = System.Text.Json.JsonSerializer.Deserialize<Actions.ReportProductionProposal>(
+            row.PayloadJson, JsonOptions);
+        Actions.ReportProductionProposal asked = command.Proposal;
+
+        // 三方核对(九审 #3):DTO 是模型看到的事实,必须逐字段对 DB;请求对 DB 抓存储篡改。
+        // 只对请求核对会漏掉"映射层把 5 写成 500"这类 DTO 侧失真。
+        return VerificationResult.FromChecks(new[]
+        {
+            new VerificationCheck("Owner", _user.Id ?? "<anonymous>", row.OwnerUserId, row.OwnerUserId == _user.Id),
+            new VerificationCheck("ActionType", dto.ActionType, row.ActionType,
+                dto.ActionType == row.ActionType && row.ActionType == ToolNames.ReportProduction),
+            new VerificationCheck("Status", dto.Status, "Pending",
+                dto.Status == nameof(Domain.Enums.PendingActionStatus.Pending)
+                    && row.Status == (int)Domain.Enums.PendingActionStatus.Pending),
+            new VerificationCheck("Summary", dto.Summary, row.Summary, dto.Summary == row.Summary),
+            new VerificationCheck("PayloadJson", dto.PayloadJson, row.PayloadJson, dto.PayloadJson == row.PayloadJson),
+            new VerificationCheck("WorkOrderCode", dto.WorkOrderCode, stored?.WorkOrderCode ?? "<null>",
+                stored?.WorkOrderCode == dto.WorkOrderCode && dto.WorkOrderCode == asked.WorkOrderCode),
+            new VerificationCheck("Completed", dto.Completed.ToString(), stored?.Completed.ToString() ?? "<null>",
+                stored?.Completed == dto.Completed && dto.Completed == asked.Completed),
+            new VerificationCheck("Qualified", dto.Qualified.ToString(), stored?.Qualified.ToString() ?? "<null>",
+                stored?.Qualified == dto.Qualified && dto.Qualified == asked.Qualified),
+            new VerificationCheck("Scrap", dto.Scrap.ToString(), stored?.Scrap.ToString() ?? "<null>",
+                stored?.Scrap == dto.Scrap && dto.Scrap == asked.Scrap),
+            new VerificationCheck("Rework", dto.Rework.ToString(), stored?.Rework.ToString() ?? "<null>",
+                stored?.Rework == dto.Rework && dto.Rework == asked.Rework)
+        });
+    }
+}

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Lingban.Agent.Chat;
+using Lingban.Application.Actions;
 using Lingban.Application.Common;
 using Lingban.Application.Common.Interfaces;
 using Lingban.Application.Common.Verification;
@@ -38,6 +39,10 @@ public static class ToolDescriptions
         "分析延期工单:所有未完结且已超过计划结束时间的工单,含延期小时数与所属产线编码。可选按产线编码过滤。";
 
     public const string GetDefectSummary = "统计近 N 天缺陷分布:按缺陷类型汇总数量与占比(帕累托底料)。";
+
+    public const string ReportProduction =
+        "提议一笔工单报工(完工/合格/报废/返工四账)。这是写操作:你只能提议,系统会弹出人工确认卡," +
+        "车间人员确认后才会执行。提议成功后告知用户等待确认,不要声称已执行。";
 
     public const string SearchKnowledge =
         "检索知识库(SOP/维护手册)。返回最相关的分块,每块带文档标题与章节锚点。" +
@@ -117,6 +122,27 @@ public class MesToolExecutor
         return RunAsync(ToolNames.CalculateOee, query, token => _sender.Send(query, token), cancellationToken);
     }
 
+    /// <summary>
+    /// 报工提议(唯一的写类工具,单一实现在此):只创建 PendingAction,不改生产数据;
+    /// 执行发生在人工确认之后。MCP 面暂不暴露(stdio 无属主身份,见 AGENTS §10 例外登记)。
+    /// </summary>
+    public Task<MesToolExecution> ProposeReportProductionAsync(
+        string workOrderCode, decimal completed, decimal qualified, decimal scrap, decimal rework,
+        int? conversationId, CancellationToken cancellationToken)
+    {
+        var command = new Lingban.Application.Actions.ProposeReportProductionCommand(
+            new Lingban.Application.Actions.ReportProductionProposal(
+                workOrderCode, completed, qualified, scrap, rework),
+            conversationId);
+        return RunAsync(ToolNames.ReportProduction, command, async token =>
+        {
+            var action = await _sender.Send(command, token);
+            return new Lingban.Application.Actions.ReportProductionProposalDto(
+                action.Id, action.ActionType, action.Summary, action.Status.ToString(),
+                workOrderCode, completed, qualified, scrap, rework, action.PayloadJson);
+        }, cancellationToken);
+    }
+
     private async Task<MesToolExecution> RunAsync<TResult>(
         string toolName, object request, Func<CancellationToken, Task<TResult>> execute, CancellationToken cancellationToken)
         where TResult : notnull
@@ -137,6 +163,11 @@ public class MesToolExecutor
         catch (Ardalis.GuardClauses.NotFoundException exception)
         {
             return ErrorExecution(new MesToolError(toolName, exception.Message, Recoverable: true));
+        }
+        catch (Lingban.Application.Common.Exceptions.ForbiddenAccessException)
+        {
+            // 工具面按角色隐藏未授权工具,这里是纵深防御(八审 #3)。
+            return ErrorExecution(new MesToolError(toolName, "当前用户无权执行该工具。", Recoverable: false));
         }
         catch (InvalidOperationException)
         {

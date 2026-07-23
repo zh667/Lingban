@@ -31,3 +31,54 @@ jobs:
 
       - name: Test
         run: dotnet test Lingban.slnx --no-build --configuration Release
+
+      # OpenAPI 快照防漂移(八审 #10):Production 启动不碰数据库,抓运行时契约,
+      # 归一化 servers 后与 web/lib/api/openapi.json 比对;后端改 DTO 忘刷快照 → CI 红。
+      - name: OpenAPI contract guard
+        run: |
+          ASPNETCORE_ENVIRONMENT=Production \
+          ConnectionStrings__LingbanDb="Host=localhost;Database=fake;Username=x;Password=y" \
+          dotnet run --project src/Web --no-build --configuration Release --no-launch-profile \
+            --urls http://localhost:5199 &
+          for i in $(seq 1 30); do
+            sleep 2
+            curl -sf http://localhost:5199/openapi/v1.json -o /tmp/openapi-live.json && break
+          done
+          test -s /tmp/openapi-live.json
+          jq 'del(.servers)' /tmp/openapi-live.json > /tmp/live-normalized.json
+          jq 'del(.servers)' web/lib/api/openapi.json > /tmp/snapshot-normalized.json
+          diff /tmp/snapshot-normalized.json /tmp/live-normalized.json \
+            || { echo "::error::OpenAPI 快照与运行时契约不一致——刷新 web/lib/api/openapi.json 并重新 pnpm gen:api"; exit 1; }
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # 生成类型与快照一致性(八审 #10):schema.d.ts 必须是 openapi.json 的忠实产物。
+      - name: Generated types guard
+        run: |
+          pnpm gen:api
+          git diff --exit-code lib/api/schema.d.ts \
+            || { echo "::error::schema.d.ts 与 openapi.json 快照不一致——运行 pnpm gen:api 并提交"; exit 1; }
+
+      - name: Build
+        run: pnpm build

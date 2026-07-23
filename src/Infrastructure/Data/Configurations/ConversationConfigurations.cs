@@ -30,5 +30,14 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(message => new { message.TenantId, message.ConversationId });
+
+        // 幂等键唯一性由数据库强制(八审 #2):check-then-act 的并发窗口关死;
+        // 键不含 ConversationId,首次请求重放(conversationId=null)同样撞索引。
+        builder.Property(message => message.OwnerUserId).HasMaxLength(128);
+        // 索引名是代码契约(九审 #2):AgentChatService 按此名精确识别幂等冲突,改名必须同步。
+        builder.HasIndex(message => new { message.TenantId, message.OwnerUserId, message.ClientMessageId })
+            .IsUnique()
+            .HasDatabaseName("IX_ConversationMessages_IdempotencyKey")
+            .HasFilter("\"ClientMessageId\" IS NOT NULL");
     }
 }
