@@ -11,6 +11,7 @@ type LoginRequest = components["schemas"]["LoginRequest"];
 type AccessTokenResponse = components["schemas"]["AccessTokenResponse"];
 type ChatRequest = components["schemas"]["ChatRequest"];
 type ConfirmRequest = components["schemas"]["ConfirmRequest"];
+type AgentStatusResponse = components["schemas"]["AgentStatusResponse"];
 
 type Verification = { status: string; summary: string };
 type ToolResult = {
@@ -67,6 +68,7 @@ export default function Home() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [scripted, setScripted] = useState(false);
   const conversationId = useRef<number | null>(null);
 
   const login = async (e: React.FormEvent) => {
@@ -79,6 +81,18 @@ export default function Home() {
     if (!res.ok) { setLoginError(true); return; }
     const tokens: AccessTokenResponse = await res.json();
     setToken(tokens.accessToken);
+    // 演示模式标识(八审 #11):脚本模型必须对观看者可见。
+    try {
+      const status = await fetch(`${API}/api/agentchat/status`, {
+        headers: { Authorization: `Bearer ${tokens.accessToken}` },
+      });
+      if (status.ok) {
+        const data: AgentStatusResponse = await status.json();
+        setScripted(data.scripted);
+      }
+    } catch {
+      // 状态查询失败不阻断使用,只是不显示横幅。
+    }
   };
 
   // 更新函数必须纯(StrictMode 双调用):只重建,不原地改。
@@ -223,6 +237,12 @@ export default function Home() {
         <h1 className="brand text-xl">{m.appName}</h1>
         <span className="text-xs" style={{ color: "var(--text-dim)" }}>{m.tagline}</span>
       </header>
+
+      {scripted && (
+        <p data-testid="scripted-banner" className="andon-amber text-xs border border-[var(--andon-amber)] rounded-sm px-3 py-2">
+          {m.scriptedBanner}
+        </p>
+      )}
 
       <section className="flex-1 space-y-6 py-4" aria-live="polite">
         {turns.length === 0 && (

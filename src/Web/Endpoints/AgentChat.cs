@@ -29,6 +29,19 @@ public class AgentChat : IEndpointGroup
         // 确认是生产写操作(八审 #3):MesData(含只读角色)不够,必须 MesWrite。
         groupBuilder.MapPost(ConfirmAction, "/actions/{actionId:int}/confirm")
             .RequireAuthorization("MesWrite");
+
+        groupBuilder.MapGet(Status, "/status")
+            .RequireAuthorization("MesData");
+    }
+
+    public record AgentStatusResponse(bool Scripted, string? Model);
+
+    // 八审 #11 轻债:scripted 演示模式必须对观看者可见,防止把固定台词当真实模型能力。
+    [EndpointSummary("Agent runtime status (scripted demo mode flag and model name)")]
+    public static Microsoft.AspNetCore.Http.HttpResults.Ok<AgentStatusResponse> Status(IConfiguration configuration)
+    {
+        bool scripted = string.Equals(configuration["Llm:Mode"], "scripted", StringComparison.OrdinalIgnoreCase);
+        return TypedResults.Ok(new AgentStatusResponse(scripted, scripted ? "scripted" : configuration["Llm:Model"]));
     }
 
     public record ConfirmRequest(bool Approve);

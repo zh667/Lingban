@@ -1,0 +1,15 @@
+#!/bin/bash
+# AGENTS.md §9 红线的机械化(同一错误第三次发生后固化,§14):
+# 目标分支已有 PR 且状态非 OPEN(已合并/已关闭)→ 拒绝推送,必须走新分支新 PR。
+# 安装:git config core.hooksPath .githooks
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  [ "$branch" = "main" ] && continue
+  state=$(gh pr view "$branch" --json state --jq .state 2>/dev/null)
+  if [ -n "$state" ] && [ "$state" != "OPEN" ]; then
+    echo "✗ 拒绝推送:分支 $branch 的 PR 状态为 $state(非 OPEN)。" >&2
+    echo "  修复提交请 cherry-pick 到基于 origin/main 的新分支,另开 PR(AGENTS.md §9)。" >&2
+    exit 1
+  fi
+done
+exit 0

@@ -12,6 +12,9 @@ test("登录 → 只读问答:工具卡与已复核徽章、绿灯柱", async ({
   const input = page.getByPlaceholder(/问车间任何事/);
   await expect(input).toBeVisible();
 
+  // 八审 #11 回归钉:scripted 演示模式必须有可见标识(E2E 后端固定跑 scripted)。
+  await expect(page.getByTestId("scripted-banner")).toBeVisible();
+
   await input.fill("今天有哪些工单?");
   await page.getByRole("button", { name: "发送" }).click();
 

@@ -85,7 +85,7 @@
 
 ## 9. Git 红线
 
-- **向特性分支追加提交前,先确认其 PR 仍为 OPEN**(`gh pr view <n> --json state`);PR 已合并的,追加必须走新分支新 PR——本仓库已两次发生修复提交搁浅在已合并分支上(PR #6 UserSecretsId、PR #9 CI 权限)。
+- **向特性分支追加提交前,先确认其 PR 仍为 OPEN**(`gh pr view <n> --json state`);PR 已合并的,追加必须走新分支新 PR——本仓库已三次发生修复提交搁浅在已合并分支上(PR #6、PR #9、PR #11)。**已机械化**:`.githooks/pre-push` 拒绝向非 OPEN PR 的分支推送(§14 纪律);新 clone 需执行一次 `git config core.hooksPath .githooks`。
 - 不覆盖、回退用户未提交改动;不对共享分支强推。
 - 未经明确要求不提交、不推送、不创建 PR。
 - 一个任务一个清晰改动;提交约定 `type(scope): description`。
