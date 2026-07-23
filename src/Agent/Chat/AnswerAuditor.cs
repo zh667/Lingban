@@ -36,6 +36,9 @@ public static class AnswerAuditor
             result => result.Verification.Status == VerificationStatus.Verified))
         {
             CollectNumbers(JsonSerializer.Serialize(result.Result, JsonOptions), allowed);
+            // 校验摘要也是模型看到的工具事实(如 "All 5 checks passed"):
+            // 模型如实转述"5 项检查通过"不算无出处数字(eval 补验实测抓出的口径缺口)。
+            CollectNumbers(result.Verification.Summary, allowed);
         }
 
         CollectNumbers(userMessage, allowed);

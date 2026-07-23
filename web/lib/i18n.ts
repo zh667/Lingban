@@ -31,6 +31,7 @@ export const messages = {
     confirmForbidden: "当前账号没有生产写权限,无法确认。",
     confirmFailed: "确认失败,请稍后重试。",
     confirmWaitStream: "等待本回合结束后可确认。",
+    scriptedBanner: "演示模式:脚本模型,输出为固定台词——工具、校验与确认链路仍是真实的。",
   },
   "en-US": {
     appName: "Lingban",
@@ -63,6 +64,7 @@ export const messages = {
     confirmForbidden: "This account has no production write permission.",
     confirmFailed: "Confirmation failed. Try again later.",
     confirmWaitStream: "Available after this turn finishes.",
+    scriptedBanner: "Demo mode: scripted model with fixed lines — tools, verification and HITL are still real.",
   },
 } as const;
 

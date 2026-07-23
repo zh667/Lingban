@@ -214,7 +214,8 @@ public class AgentEvalTests : TestBase
         // 答案级审计必须通过:数字有出处、无未校验工具。
         AnswerAuditEvent audit = events.OfType<AnswerAuditEvent>().ShouldHaveSingleItem();
         audit.Passed.ShouldBeTrue(
-            $"答案审计未通过:未证实数字[{string.Join(",", audit.UnverifiedNumbers)}] 非Verified工具[{string.Join(",", audit.NonVerifiedTools)}]");
+            $"答案审计未通过:未证实数字[{string.Join(",", audit.UnverifiedNumbers)}] 非Verified工具[{string.Join(",", audit.NonVerifiedTools)}]\n" +
+            $"答案原文:{string.Concat(events.OfType<TokenEvent>().Select(token => token.Text))}");
 
         string answer = string.Concat(events.OfType<TokenEvent>().Select(token => token.Text));
         answer.ShouldNotBeNullOrWhiteSpace("模型必须产出最终回答");
