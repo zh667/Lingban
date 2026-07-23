@@ -21,17 +21,30 @@ public class VerificationQueryService : IVerificationQueryService
         _tenantContext = tenantContext;
     }
 
+    public async Task<int?> ResolveProductionLineIdByCodeAsync(string code, CancellationToken cancellationToken)
+    {
+        string tenant = _tenantContext.TenantId;
+        List<int> ids = await _context.Database.SqlQuery<int>($"""
+            SELECT "Id" AS "Value" FROM "ProductionLines"
+            WHERE "TenantId" = {tenant} AND "Code" = {code}
+            """).ToListAsync(cancellationToken);
+        return ids.Count == 1 ? ids[0] : null;
+    }
+
     public async Task<TodayWorkOrderCounts> CountTodayWorkOrdersAsync(
         DateTimeOffset fromUtc, DateTimeOffset toUtc, int? productionLineId, CancellationToken cancellationToken)
     {
         string tenant = _tenantContext.TenantId;
-        // -1 哨兵表示"不过滤产线",避免拼接两套 SQL。
         int lineFilter = productionLineId ?? -1;
 
         CountsRow row = await _context.Database.SqlQuery<CountsRow>($"""
             SELECT COUNT(*)::int AS "Total",
                    COUNT(*) FILTER (WHERE "Status" = 2)::int AS "InProgress",
-                   COUNT(*) FILTER (WHERE "Status" = 3)::int AS "Completed"
+                   COUNT(*) FILTER (WHERE "Status" = 3)::int AS "Completed",
+                   COALESCE(SUM("PlannedQuantity"), 0) AS "PlannedSum",
+                   COALESCE(SUM("CompletedQuantity"), 0) AS "CompletedSum",
+                   COALESCE(SUM("QualifiedQuantity"), 0) AS "QualifiedSum",
+                   COALESCE(SUM("ScrapQuantity"), 0) AS "ScrapSum"
             FROM "WorkOrders"
             WHERE "TenantId" = {tenant}
               AND ({lineFilter} = -1 OR "ProductionLineId" = {lineFilter})
@@ -41,35 +54,83 @@ public class VerificationQueryService : IVerificationQueryService
               )
             """).SingleAsync(cancellationToken);
 
-        return new TodayWorkOrderCounts(row.Total, row.InProgress, row.Completed);
+        return new TodayWorkOrderCounts(
+            row.Total, row.InProgress, row.Completed,
+            row.PlannedSum, row.CompletedSum, row.QualifiedSum, row.ScrapSum);
     }
 
-    public async Task<IReadOnlyList<int>> GetDelayedWorkOrderIdsAsync(
-        DateTimeOffset asOfUtc, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<DelayedOrderRow>> GetDelayedWorkOrderRowsAsync(
+        DateTimeOffset asOfUtc, int? productionLineId, CancellationToken cancellationToken)
     {
         string tenant = _tenantContext.TenantId;
-        return await _context.Database.SqlQuery<int>($"""
-            SELECT "Id" AS "Value"
+        int lineFilter = productionLineId ?? -1;
+        List<DelayedRow> rows = await _context.Database.SqlQuery<DelayedRow>($"""
+            SELECT "Id", "PlannedEndUtc", "PlannedQuantity", "CompletedQuantity"
             FROM "WorkOrders"
             WHERE "TenantId" = {tenant}
+              AND ({lineFilter} = -1 OR "ProductionLineId" = {lineFilter})
               AND "Status" NOT IN (3, 4)
               AND "PlannedEndUtc" IS NOT NULL
               AND "PlannedEndUtc" < {asOfUtc}
             ORDER BY "Id"
             """).ToListAsync(cancellationToken);
+
+        return rows
+            .Select(row => new DelayedOrderRow(row.Id, row.PlannedEndUtc!.Value, row.PlannedQuantity, row.CompletedQuantity))
+            .ToList();
     }
 
-    public async Task<decimal> SumDefectQuantityBetweenAsync(
+    public async Task<IReadOnlyList<DefectTypeRow>> GetDefectTypeRowsAsync(
         DateTimeOffset sinceUtc, DateTimeOffset asOfUtc, CancellationToken cancellationToken)
     {
         string tenant = _tenantContext.TenantId;
-        return await _context.Database.SqlQuery<decimal>($"""
-            SELECT COALESCE(SUM("Quantity"), 0) AS "Value"
-            FROM "DefectRecords"
+        List<DefectRow> rows = await _context.Database.SqlQuery<DefectRow>($"""
+            SELECT t."Code", COALESCE(SUM(r."Quantity"), 0) AS "Quantity"
+            FROM "DefectRecords" r
+            JOIN "DefectTypes" t ON t."Id" = r."DefectTypeId"
+            WHERE r."TenantId" = {tenant}
+              AND r."RecordedAtUtc" >= {sinceUtc}
+              AND r."RecordedAtUtc" < {asOfUtc}
+            GROUP BY t."Code"
+            ORDER BY t."Code"
+            """).ToListAsync(cancellationToken);
+        return rows.Select(row => new DefectTypeRow(row.Code, row.Quantity)).ToList();
+    }
+
+    public async Task<EquipmentProfile?> GetEquipmentProfileAsync(
+        int? equipmentId, string? equipmentCode, CancellationToken cancellationToken)
+    {
+        string tenant = _tenantContext.TenantId;
+        int idFilter = equipmentId ?? -1;
+        string codeFilter = equipmentCode ?? string.Empty;
+        List<ProfileRow> rows = await _context.Database.SqlQuery<ProfileRow>($"""
+            SELECT e."Id", e."Code", w."ProductionLineId", e."IdealCycleTimeSeconds"
+            FROM "Equipment" e
+            LEFT JOIN "Workstations" w ON w."Id" = e."WorkstationId"
+            WHERE e."TenantId" = {tenant}
+              AND (({idFilter} <> -1 AND e."Id" = {idFilter})
+                OR ({idFilter} = -1 AND e."Code" = {codeFilter}))
+            """).ToListAsync(cancellationToken);
+        ProfileRow? row = rows.SingleOrDefault();
+        return row is null
+            ? null
+            : new EquipmentProfile(row.Id, row.Code, row.ProductionLineId, row.IdealCycleTimeSeconds);
+    }
+
+    public async Task<LineProductionTotals> GetLineProductionTotalsAsync(
+        int productionLineId, DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken)
+    {
+        string tenant = _tenantContext.TenantId;
+        TotalsRow row = await _context.Database.SqlQuery<TotalsRow>($"""
+            SELECT COALESCE(SUM("CompletedQuantity"), 0) AS "Completed",
+                   COALESCE(SUM("QualifiedQuantity"), 0) AS "Qualified"
+            FROM "WorkOrders"
             WHERE "TenantId" = {tenant}
-              AND "RecordedAtUtc" >= {sinceUtc}
-              AND "RecordedAtUtc" < {asOfUtc}
+              AND "ProductionLineId" = {productionLineId}
+              AND "ActualStartUtc" >= {fromUtc}
+              AND "ActualStartUtc" < {toUtc}
             """).SingleAsync(cancellationToken);
+        return new LineProductionTotals(row.Completed, row.Qualified);
     }
 
     public async Task<double> SumDowntimeUnionMinutesAsync(
@@ -149,6 +210,50 @@ public class VerificationQueryService : IVerificationQueryService
         public int InProgress { get; set; }
 
         public int Completed { get; set; }
+
+        public decimal PlannedSum { get; set; }
+
+        public decimal CompletedSum { get; set; }
+
+        public decimal QualifiedSum { get; set; }
+
+        public decimal ScrapSum { get; set; }
+    }
+
+    private sealed class DelayedRow
+    {
+        public int Id { get; set; }
+
+        public DateTimeOffset? PlannedEndUtc { get; set; }
+
+        public decimal PlannedQuantity { get; set; }
+
+        public decimal CompletedQuantity { get; set; }
+    }
+
+    private sealed class DefectRow
+    {
+        public string Code { get; set; } = string.Empty;
+
+        public decimal Quantity { get; set; }
+    }
+
+    private sealed class ProfileRow
+    {
+        public int Id { get; set; }
+
+        public string Code { get; set; } = string.Empty;
+
+        public int? ProductionLineId { get; set; }
+
+        public decimal IdealCycleTimeSeconds { get; set; }
+    }
+
+    private sealed class TotalsRow
+    {
+        public decimal Completed { get; set; }
+
+        public decimal Qualified { get; set; }
     }
 
     private sealed class IntervalRow

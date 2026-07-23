@@ -30,8 +30,18 @@ public record TodayWorkOrdersDto(
 /// "今天"的工单:生产日按工厂日历与班次切分(旧项目 UTC 划天的病根治点)。
 /// AsOfUtc 缺省为当前时刻,测试与回放可显式传入。
 /// </summary>
-public record GetTodayWorkOrdersQuery(int? ProductionLineId = null, DateTimeOffset? AsOfUtc = null)
-    : IRequest<TodayWorkOrdersDto>;
+public record GetTodayWorkOrdersQuery(
+    int? ProductionLineId = null,
+    DateTimeOffset? AsOfUtc = null,
+    string? ProductionLineCode = null) : IRequest<TodayWorkOrdersDto>;
+
+public class GetTodayWorkOrdersQueryValidator : AbstractValidator<GetTodayWorkOrdersQuery>
+{
+    public GetTodayWorkOrdersQueryValidator()
+    {
+        RuleFor(query => query.ProductionLineId).GreaterThan(0).When(query => query.ProductionLineId.HasValue);
+    }
+}
 
 public class GetTodayWorkOrdersQueryHandler : IRequestHandler<GetTodayWorkOrdersQuery, TodayWorkOrdersDto>
 {
@@ -52,6 +62,7 @@ public class GetTodayWorkOrdersQueryHandler : IRequestHandler<GetTodayWorkOrders
     public async Task<TodayWorkOrdersDto> Handle(GetTodayWorkOrdersQuery request, CancellationToken cancellationToken)
     {
         DateTimeOffset asOf = request.AsOfUtc ?? _timeProvider.GetUtcNow();
+        int? lineId = await ResolveLineAsync(request, cancellationToken);
         ShiftCalendar calendar = await _calendarProvider.GetCalendarAsync(cancellationToken);
         DateOnly productionDate = calendar.GetProductionDate(asOf);
         var (fromUtc, toUtc) = calendar.GetProductionDayBoundsUtc(productionDate);
@@ -61,9 +72,9 @@ public class GetTodayWorkOrdersQueryHandler : IRequestHandler<GetTodayWorkOrders
                 (order.ActualStartUtc >= fromUtc && order.ActualStartUtc < toUtc) ||
                 (order.ActualStartUtc == null && order.PlannedStartUtc >= fromUtc && order.PlannedStartUtc < toUtc));
 
-        if (request.ProductionLineId is int lineId)
+        if (lineId is int resolvedLineId)
         {
-            query = query.Where(order => order.ProductionLineId == lineId);
+            query = query.Where(order => order.ProductionLineId == resolvedLineId);
         }
 
         List<WorkOrderSummaryDto> orders = await query
@@ -83,12 +94,32 @@ public class GetTodayWorkOrdersQueryHandler : IRequestHandler<GetTodayWorkOrders
 
         return new TodayWorkOrdersDto(
             productionDate,
-            request.ProductionLineId,
+            lineId,
             fromUtc,
             toUtc,
             orders,
             orders.Count,
             orders.Count(order => order.Status == WorkOrderStatus.InProgress),
             orders.Count(order => order.Status == WorkOrderStatus.Completed));
+    }
+
+    private async Task<int?> ResolveLineAsync(GetTodayWorkOrdersQuery request, CancellationToken cancellationToken)
+    {
+        if (request.ProductionLineId is int id)
+        {
+            return id;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ProductionLineCode))
+        {
+            return null;
+        }
+
+        int? resolved = await _context.ProductionLines
+            .Where(line => line.Code == request.ProductionLineCode)
+            .Select(line => (int?)line.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        Guard.Against.NotFound(request.ProductionLineCode, resolved);
+        return resolved;
     }
 }

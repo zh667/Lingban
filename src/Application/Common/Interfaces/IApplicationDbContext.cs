@@ -1,4 +1,5 @@
 using Lingban.Domain.Entities.Calendar;
+using Lingban.Domain.Entities.Conversations;
 using Lingban.Domain.Entities.Equipment;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
@@ -41,6 +42,10 @@ public interface IApplicationDbContext
     DbSet<EquipmentStatusRecord> EquipmentStatusRecords { get; }
 
     DbSet<DowntimeRecord> DowntimeRecords { get; }
+
+    DbSet<Conversation> Conversations { get; }
+
+    DbSet<ConversationMessage> ConversationMessages { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

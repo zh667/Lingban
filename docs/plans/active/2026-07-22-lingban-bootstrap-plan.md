@@ -112,8 +112,8 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 | 项 | 推荐修复时机 | 触发条件 |
 | --- | --- | --- |
 | #8 余下:全部展示事实的逐字段复核(明细数量、OEE 分量) | M3,DTO 进入 Agent 答案时 | LLM 开始引用某字段,该字段就必须有校验 |
-| #12:QueryLog 工具级边界(checkpoint/关联 ID) | M3,DebugInfo 消费端落地时 | 同一作用域出现多工具调用 |
-| #14:工具 LLM contract(Description/schema/eval)与 HITL | M3 注册时 | 即 AGENTS.md 铁律 #3 的交付时点,口径已在 M2 小节修正 |
+| SSE 聊天端点匿名 → 鉴权 | M4(MCP/鉴权边界) | 任何非本机部署 |
+| 写操作工具 + HITL 确认交互 | M4(MCP)/M6(UI) | 首个写工具注册时 |
 | #13 余下:唯一索引兜底路径的确定性并发测试 | 守卫被真实击中一次时 | 闸门已串行化,该路径为理论后盾 |
 
 **口径修正**:M2 交付的是"工具查询内核",非完整 Agent 工具;"每工具四件套"的验收移至 M3 注册时点。
@@ -136,14 +136,35 @@ Codex CLI 审查 PR #4(9 bug / 4 风险 / 1 建议),核心批评成立:四条债
 
 **目标**:LLM 驱动的工具编排,替代旧项目的关键词 if-else。
 
-- [ ] 接入 Microsoft Agent Framework(`Microsoft.Agents.AI`),注册全部工具(Description 即 function schema);模型商可配置(Claude 优先)。
-- [ ] 删除"模式由用户选"的设计:LLM 自主选择工具,AgentMode 降级为可选提示。
-- [ ] SSE 透传模型真实 token 流;工具结果 → FactVerifier → 校验结论随消息返回并持久化。
-- [ ] 会话上下文窗口真实喂给 LLM(多轮对话)。
-- [ ] 写操作类工具走 Human-in-the-loop 确认;只读工具自动执行。
-- [ ] **最小 eval 集**:每个工具至少 1 条"中文自然语言问题 → 应选中该工具且数字经校验"的用例;eval 命令写进 AGENTS.md 第 2 节。
+- [x] LLM 接入:**Microsoft.Extensions.AI `IChatClient` + `UseFunctionInvocation` 手控循环**(决策调整:MAF 高层 `Microsoft.Agents.AI` 站在同一抽象上,随 M4 MCP/A2A 引入;手控层才能在每次工具调用内部插 AsOf 钉死/事实校验/SQL 分段)。提供商可配置(当前 openai-compatible 中转,`Llm:*` user-secrets)。
+- [x] 四工具注册(铁律 #3 四件套齐):中文 Description + FluentValidation 参数校验 + VerificationRule + eval 用例;LLM 自主选工具,"模式由用户选"的概念不存在。
+- [x] AsOf 钉死(三审设计约束):`IAgentInvocationClock` 每次调用进循环时 Pin 一次,全部工具与校验共用——脚本化测试以"校验 Verified"证明钉死生效。
+- [x] SSE 端点真 token 透传(`POST /api/agentchat/chat`);工具结果 + 校验结论 + 真实 SQL(QueryLog 分段,债 #12 还清)随事件流下发并持久化到会话消息。
+- [x] 会话上下文窗口(近 10 条)真实喂给 LLM——测试断言模型第二轮收到了第一轮的问答。
+- [x] 最小 eval 集 4 条(每工具一条中文问题 → 选对工具 + Verified);命令入 AGENTS.md 第 2 节;CI 无密钥自动跳过。
+- 范围界定:M3 只注册**只读工具**,写操作工具 + HITL 确认交互随 M4(MCP)/M6(UI)进入(铁律 #5 的交付时点);SSE 端点暂匿名,M4 鉴权边界收紧(入债表)。
+- ⚠️ eval 实跑状态:harness 已验证可发起真实调用,但中转站(cn.aiapi.bot)上游账号池当前整体 503(`codex_scheduler_no_eligible_account`,密钥有效、models 接口正常)——**live eval 通过待中转恢复,不作"已通过"声明**。
 
-**验收**:"3号线今天延期的工单有哪些?为什么?"→ LLM 正确选择工具(不把 3 当设备 ID)→ 校验通过 → 真流式中文回答;eval 全绿。
+**验收**:脚本化 LLM 功能测试 2 条全绿(工具执行/校验/流式/持久化/多轮);live eval 待中转可用后补验——"3号线今天延期的工单"类问题选对工具且校验通过。
+
+## M3 审查跟进(Codex 四审,2026-07-23)
+
+四审 7 bug / 6 风险 / 1 建议,全部核实为真。同 PR 修复:
+- #1 答案级闸门 → **AnswerAuditor**:最终答案数字必须在"已 Verified 工具数据/用户原话"中有出处,任一工具非 Verified 即整体降级;AnswerAuditEvent 随流下发并持久化;"工具说1模型说9被抓"回归测试。
+- #2 债 #8 还清 → 四规则字段级/逐行复核(Today 四账合计、Delayed 逐单字段+延期小时重算、Defect 逐类型+占比重算、OEE 全部派生分量按同公式独立重算)。
+- #3 验收问题可表达 → Today/Delayed 支持产线编码过滤(进独立校验 SQL),OEE 支持设备编码;eval 恢复"3号线延期工单"原题并断言不混线。
+- #4 UserSecretsId 找回(合并时序事故:修复提交搁浅在已合并的 PR #6 分支上);eval 改走 ConfigurationBuilder(user-secrets+环境变量)与 Web 同路径。
+- #5 参数信任边界 → 日期 TryParseExact、结构化可恢复错误回给模型(含字段与格式)、Today/OEE validator 补齐;坏日期不断流测试。
+- #6 失败闭合 → 流异常持久化失败回合 + SSE error 事件,不留孤立断流;幂等键/重试语义留 M6 UI(债)。
+- #7/#13 CallId 贯穿事件与持久化;SQL 三段分账(toolSql/verificationSql)。
+- #8 AllowConcurrentInvocation 显式 false + 注释边界条件。
+- #9 上下文 (Created,Id) 稳定排序 + 助手历史附工具数据快照(标注过期)。
+- #10 系统提示词加入信任层级(工具文本是数据不是指令);对抗 eval 留债。
+- #11 消息限长 4000 字符;速率限制留 M4。
+- #12 eval 严格化:期望工具 + 答案审计通过 + 含种子数字/工单号断言;预检分类(5xx→跳过,401/400/429→显式失败)、静态缓存;网关中途断流按跳过。
+- eval 实跑:中转站持续抖动(短暂恢复期确认其流式工具调用协议正常,随后再次整体不可用),live 通过仍待中转稳定。
+
+留债:对抗性注入 eval(M5 知识库入库时)、请求速率限制与幂等重试键(M4/M6)。
 
 ## 里程碑 4:MCP Server(单一实现,两处暴露)
 
