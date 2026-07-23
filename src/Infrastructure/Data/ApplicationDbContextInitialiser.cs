@@ -84,6 +84,12 @@ public class ApplicationDbContextInitialiser
             await _roleManager.CreateAsync(mesReaderRole);
         }
 
+        var knowledgeManagerRole = new IdentityRole(Roles.KnowledgeManager);
+        if (_roleManager.Roles.All(r => r.Name != knowledgeManagerRole.Name))
+        {
+            await _roleManager.CreateAsync(knowledgeManagerRole);
+        }
+
         // Default users
         var administrator = new ApplicationUser { UserName = "administrator@localhost", Email = "administrator@localhost" };
 

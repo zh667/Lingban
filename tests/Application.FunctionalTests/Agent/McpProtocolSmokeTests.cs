@@ -45,7 +45,7 @@ public class McpProtocolSmokeTests : TestBase
         tools.Select(tool => tool.Name).OrderBy(name => name).ShouldBe(new[]
         {
             "mes_analyze_delayed_orders", "mes_calculate_oee",
-            "mes_get_defect_summary", "mes_get_today_work_orders"
+            "mes_get_defect_summary", "mes_get_today_work_orders", "mes_search_knowledge"
         });
 
         // 成功调用:真实数据 + 校验结论走完整协议编解码。

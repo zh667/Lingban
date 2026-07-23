@@ -1,5 +1,6 @@
 using Lingban.Application.Common.Interfaces;
 using Lingban.Application.Equipment.Queries;
+using Lingban.Application.Knowledge.Queries;
 using Lingban.Application.Production.Queries;
 using Lingban.Application.Quality.Queries;
 using Lingban.Domain.Services;
@@ -244,6 +245,76 @@ public class DefectSummaryVerificationRule : IVerificationRule
                 $"Type[{item.Code}]",
                 $"{item.Quantity}@{item.Share:0.####}",
                 $"{row.Quantity}@{expectedShare:0.####}",
+                match));
+        }
+
+        return VerificationResult.FromChecks(checks);
+    }
+}
+
+/// <summary>
+/// 知识检索校验:每个返回分块的文本与文档标题经独立 SQL 核对(内容完整性);
+/// 相似度排名依赖同一 embedding,无法独立复核——如实降为不校验项,不假装。
+/// </summary>
+public class KnowledgeSearchVerificationRule : IVerificationRule
+{
+    private readonly IVerificationQueryService _queries;
+
+    public KnowledgeSearchVerificationRule(IVerificationQueryService queries) => _queries = queries;
+
+    public bool Supports(string toolName) => toolName == ToolNames.SearchKnowledge;
+
+    public async Task<VerificationResult> VerifyAsync(
+        object toolRequest, object toolResult, CancellationToken cancellationToken)
+    {
+        if (toolResult is not KnowledgeSearchResultDto dto)
+        {
+            return TodayWorkOrdersVerificationRule.Mismatched(nameof(KnowledgeSearchResultDto));
+        }
+
+        if (toolRequest is not SearchKnowledgeQuery query)
+        {
+            return TodayWorkOrdersVerificationRule.MissingContext(nameof(SearchKnowledgeQuery));
+        }
+
+        // 空结果无法独立复核(阈值语义依赖同一 embedding):库里有可检索分块时如实降 Unverified。
+        if (dto.Hits.Count == 0)
+        {
+            int retrievable = await _queries.CountRetrievableChunksAsync(cancellationToken);
+            return retrievable == 0
+                ? VerificationResult.FromChecks(new[] { new VerificationCheck("EmptyKnowledgeBase", "0", "0", true) })
+                : new VerificationResult
+                {
+                    Status = VerificationStatus.Unverified,
+                    Summary = "空检索结果无法独立复核(相关性阈值依赖同一 embedding);知识库并非为空,请谨慎依赖。"
+                };
+        }
+
+        var checks = new List<VerificationCheck>
+        {
+            new("Query", dto.Query, query.Query, dto.Query == query.Query),
+            new("TopK", dto.Hits.Count.ToString(), $"<= {query.TopK}", dto.Hits.Count <= query.TopK),
+            new("DistinctChunkIds", dto.Hits.Count.ToString(),
+                dto.Hits.Select(hit => hit.ChunkId).Distinct().Count().ToString(),
+                dto.Hits.Select(hit => hit.ChunkId).Distinct().Count() == dto.Hits.Count),
+            new("SimilarityRange", string.Join(",", dto.Hits.Select(hit => hit.Similarity.ToString("0.###"))),
+                "有限且 [-1, 1] 且非递增",
+                dto.Hits.All(hit => double.IsFinite(hit.Similarity) && hit.Similarity is >= -1 and <= 1.0001)
+                    && dto.Hits.Zip(dto.Hits.Skip(1), (a, b) => a.Similarity >= b.Similarity - 0.0001).All(x => x))
+        };
+
+        foreach (Application.Common.Interfaces.KnowledgeHit hit in dto.Hits)
+        {
+            var row = await _queries.GetKnowledgeChunkAsync(hit.ChunkId, cancellationToken);
+            bool match = row is not null
+                && row.HasEmbedding
+                && row.Text == hit.Text
+                && row.DocumentTitle == hit.DocumentTitle
+                && row.Section == hit.Section;
+            checks.Add(new VerificationCheck(
+                $"Chunk[{hit.ChunkId}]",
+                $"{hit.DocumentTitle}§{hit.Section}",
+                row is null ? "<不存在>" : $"{row.DocumentTitle}§{row.Section}",
                 match));
         }
 

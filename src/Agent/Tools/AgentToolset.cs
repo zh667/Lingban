@@ -31,7 +31,8 @@ public class AgentToolset
         AIFunctionFactory.Create(GetTodayWorkOrdersAsync, ToolNames.GetTodayWorkOrders, ToolDescriptions.GetTodayWorkOrders),
         AIFunctionFactory.Create(AnalyzeDelayedOrdersAsync, ToolNames.AnalyzeDelayedOrders, ToolDescriptions.AnalyzeDelayedOrders),
         AIFunctionFactory.Create(GetDefectSummaryAsync, ToolNames.GetDefectSummary, ToolDescriptions.GetDefectSummary),
-        AIFunctionFactory.Create(CalculateOeeAsync, ToolNames.CalculateOee, ToolDescriptions.CalculateOee)
+        AIFunctionFactory.Create(CalculateOeeAsync, ToolNames.CalculateOee, ToolDescriptions.CalculateOee),
+        AIFunctionFactory.Create(SearchKnowledgeAsync, ToolNames.SearchKnowledge, ToolDescriptions.SearchKnowledge)
     };
 
     private async Task<string> GetTodayWorkOrdersAsync(
@@ -48,6 +49,12 @@ public class AgentToolset
         [Description("统计最近多少天,1-365,默认 7")] int days = 7,
         CancellationToken cancellationToken = default)
         => Render(await _executor.GetDefectSummaryAsync(days, cancellationToken));
+
+    private async Task<string> SearchKnowledgeAsync(
+        [Description("检索问题,自然语言")] string query,
+        [Description("返回分块数,1-20,默认 5")] int topK = 5,
+        CancellationToken cancellationToken = default)
+        => Render(await _executor.SearchKnowledgeAsync(query, topK, cancellationToken));
 
     private async Task<string> CalculateOeeAsync(
         [Description("设备业务编码,如 EQ-1")] string equipmentCode,

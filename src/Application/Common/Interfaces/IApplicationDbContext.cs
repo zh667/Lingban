@@ -1,6 +1,7 @@
 using Lingban.Domain.Entities.Calendar;
 using Lingban.Domain.Entities.Conversations;
 using Lingban.Domain.Entities.Equipment;
+using Lingban.Domain.Entities.Knowledge;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
 using Lingban.Domain.Entities.Quality;
@@ -46,6 +47,10 @@ public interface IApplicationDbContext
     DbSet<Conversation> Conversations { get; }
 
     DbSet<ConversationMessage> ConversationMessages { get; }
+
+    DbSet<KnowledgeDocument> KnowledgeDocuments { get; }
+
+    DbSet<KnowledgeChunk> KnowledgeChunks { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }

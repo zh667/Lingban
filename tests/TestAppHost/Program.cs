@@ -9,6 +9,7 @@ public class Program
         var builder = DistributedApplication.CreateBuilder(args);
 
         builder.AddPostgres(Services.DatabaseServer)
+            .WithImage("pgvector/pgvector", "pg17")
             .AddDatabase(Services.Database);
 
         builder.Build().Run();

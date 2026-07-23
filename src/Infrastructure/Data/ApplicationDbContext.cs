@@ -5,6 +5,7 @@ using Lingban.Domain.Common;
 using Lingban.Domain.Entities.Calendar;
 using Lingban.Domain.Entities.Conversations;
 using Lingban.Domain.Entities.Equipment;
+using Lingban.Domain.Entities.Knowledge;
 using Lingban.Domain.Entities.Materials;
 using Lingban.Domain.Entities.Production;
 using Lingban.Domain.Entities.Quality;
@@ -65,6 +66,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
 
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
 
+    public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
+
+    public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         base.ConfigureConventions(configurationBuilder);
@@ -76,6 +81,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>, IApplica
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+        builder.HasPostgresExtension("vector");
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
         ApplyTenantQueryFilters(builder);
     }

@@ -53,6 +53,14 @@ public sealed class LingbanMesTools
         CancellationToken cancellationToken = default)
         => RunAsync((executor, token) => executor.CalculateOeeAsync(equipmentCode, productionDate, token), cancellationToken);
 
+    [McpServerTool(Name = "mes_search_knowledge", ReadOnly = true, Idempotent = true, OpenWorld = false)]
+    [Description(ToolDescriptions.SearchKnowledge)]
+    public Task<CallToolResult> SearchKnowledgeAsync(
+        [Description("检索问题,自然语言")] string query,
+        [Description("返回分块数,1-20,默认 5")] int topK = 5,
+        CancellationToken cancellationToken = default)
+        => RunAsync((executor, token) => executor.SearchKnowledgeAsync(query, topK, token), cancellationToken);
+
     private async Task<CallToolResult> RunAsync(
         Func<MesToolExecutor, CancellationToken, Task<MesToolExecution>> action,
         CancellationToken cancellationToken)
