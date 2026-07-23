@@ -21,8 +21,10 @@ public class McpProtocolSmokeTests : TestBase
         });
 
         string repoRoot = FindRepoRoot();
+        // 构建配置从当前测试程序集路径推导(本地 debug / CI release),不许写死。
+        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Name;
         string serverDll = Path.Combine(
-            repoRoot, "artifacts", "bin", "McpServer", "debug", "Lingban.McpServer.dll");
+            repoRoot, "artifacts", "bin", "McpServer", configuration, "Lingban.McpServer.dll");
         File.Exists(serverDll).ShouldBeTrue($"先构建解决方案:{serverDll} 不存在");
 
         var transport = new StdioClientTransport(new StdioClientTransportOptions
