@@ -15,6 +15,12 @@ public class ConversationMessage : BaseAuditableEntity, ITenantEntity
     /// <summary>本条助手消息期间的工具调用结果(JSON,含校验结论与真实 SQL)。</summary>
     public string? ToolResultsJson { get; set; }
 
-    /// <summary>客户端幂等键:同键重试不产生重复回合。</summary>
+    /// <summary>客户端幂等键:同键重试不产生重复回合。唯一性由数据库索引强制(八审 #2)。</summary>
     public Guid? ClientMessageId { get; set; }
+
+    /// <summary>
+    /// 幂等键的属主(冗余自会话属主):使唯一索引 (TenantId, OwnerUserId, ClientMessageId)
+    /// 不依赖 ConversationId——首次请求响应丢失后带 null conversationId 重放也会撞键。
+    /// </summary>
+    public string? OwnerUserId { get; set; }
 }

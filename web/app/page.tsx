@@ -17,12 +17,36 @@ type ToolResult = {
   callId: string; tool: string; data: unknown; verification: Verification;
   toolSql: string[]; verificationSql: string[]; elapsedMs: number;
 };
-type Hitl = { actionId: number; actionType: string; summary: string; state?: "approved" | "rejected" };
+type Hitl = { actionId: number; actionType: string; summary: string; state?: "approved" | "rejected"; error?: string };
 type Audit = { passed: boolean; unverifiedNumbers: string[]; nonVerifiedTools: string[]; invalidCitations: string[] };
 type Turn = {
   role: "user" | "assistant"; text: string;
   tools: ToolResult[]; hitl: Hitl[]; audit?: Audit; error?: string;
+  // 重试必须复用同一幂等键(八审 #2):键与原始提问一起存在失败回合上。
+  retryMessage?: string; retryKey?: string;
 };
+
+// SSE 按行解析(八审 #7):支持 LF/CRLF、多行 data(按规范以 \n 拼接)、注释行与跨 chunk 残帧。
+function parseSseLines(
+  lines: string[],
+  pending: { event: string; data: string[] },
+  emit: (event: string, data: string) => void,
+) {
+  for (const raw of lines) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") {
+      if (pending.data.length > 0) emit(pending.event || "message", pending.data.join("\n"));
+      pending.event = "";
+      pending.data = [];
+    } else if (line.startsWith(":")) {
+      // 注释帧,忽略。
+    } else if (line.startsWith("event:")) {
+      pending.event = line.slice(6).trimStart();
+    } else if (line.startsWith("data:")) {
+      pending.data.push(line.slice(5).replace(/^ /, ""));
+    }
+  }
+}
 
 const andonOf = (turn: Turn): "green" | "amber" | "red" => {
   if (turn.error || turn.audit?.passed === false) return "red";
@@ -60,62 +84,108 @@ export default function Home() {
   const patch = (fn: (last: Turn) => Turn) =>
     setTurns((prev) => [...prev.slice(0, -1), fn(prev[prev.length - 1])]);
 
-  const send = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || busy || !token) return;
-    const message = input.trim();
-    setInput("");
+  // 单条消息的完整流式回合;retry 时传入原键复用幂等语义。
+  const streamTurn = async (message: string, clientKey: string) => {
     setBusy(true);
-    setTurns((prev) => [...prev,
-      { role: "user", text: message, tools: [], hitl: [] },
-      { role: "assistant", text: "", tools: [], hitl: [] }]);
+    // 流异常必须闭合(八审 #6):任何 fetch/读取/解析失败都标红本回合并归还输入框。
+    let terminal = false; // 收到 done 或 error 才算正常终止;裸 EOF 也是失败。
+    try {
+      const res = await fetch(`${API}/api/agentchat/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          conversationId: conversationId.current, message,
+          clientMessageId: clientKey,
+        } satisfies ChatRequest),
+      });
+      if (!res.ok || !res.body) {
+        patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+        return;
+      }
 
-    const res = await fetch(`${API}/api/agentchat/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        conversationId: conversationId.current, message,
-        clientMessageId: crypto.randomUUID(),
-      } satisfies ChatRequest),
-    });
-    if (!res.ok || !res.body) { patch((x) => ({ ...x, error: m.streamError })); setBusy(false); return; }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-      for (const frame of frames) {
-        const ev = /^event: (.+)$/m.exec(frame)?.[1];
-        const dataRaw = /^data: (.+)$/m.exec(frame)?.[1];
-        if (!ev || !dataRaw) continue;
+      const handle = (ev: string, dataRaw: string) => {
         const data = JSON.parse(dataRaw);
         if (ev === "token") patch((x) => ({ ...x, text: x.text + data.text }));
         else if (ev === "tool_result") patch((x) => ({ ...x, tools: [...x.tools, data] }));
         else if (ev === "hitl_pending") patch((x) => ({ ...x, hitl: [...x.hitl, data] }));
         else if (ev === "answer_audit") patch((x) => ({ ...x, audit: data }));
-        else if (ev === "error") patch((x) => ({ ...x, error: data.message }));
-        else if (ev === "done") { conversationId.current = data.conversationId; }
+        else if (ev === "error") { terminal = true; patch((x) => ({ ...x, error: data.message })); }
+        else if (ev === "done") { terminal = true; conversationId.current = data.conversationId; }
+      };
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const pending = { event: "", data: [] as string[] };
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        parseSseLines(lines, pending, handle);
       }
+      buffer += decoder.decode();
+      parseSseLines([...buffer.split("\n"), ""], pending, handle);
+
+      if (!terminal) {
+        patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+      }
+    } catch {
+      patch((x) => ({ ...x, error: m.streamError, retryMessage: message, retryKey: clientKey }));
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
+  };
+
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || busy || !token) return;
+    const message = input.trim();
+    setInput("");
+    setTurns((prev) => [...prev,
+      { role: "user", text: message, tools: [], hitl: [] },
+      { role: "assistant", text: "", tools: [], hitl: [] }]);
+    await streamTurn(message, crypto.randomUUID());
+  };
+
+  const retry = async (turnIndex: number) => {
+    const failed = turns[turnIndex];
+    if (busy || !failed.retryMessage || !failed.retryKey) return;
+    const { retryMessage, retryKey } = failed;
+    // 复位失败回合,重新流入同一气泡;键不变,后端幂等索引兜底。
+    setTurns((prev) => prev.map((turn, i) =>
+      i !== turnIndex ? turn : { role: "assistant", text: "", tools: [], hitl: [] }));
+    await streamTurn(retryMessage, retryKey);
   };
 
   const confirm = async (turnIndex: number, hitlIndex: number, approve: boolean) => {
     const action = turns[turnIndex].hitl[hitlIndex];
-    const res = await fetch(`${API}/api/agentchat/actions/${action.actionId}/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ approve } satisfies ConfirmRequest),
-    });
-    if (res.ok) setTurns((prev) => prev.map((turn, i) => i !== turnIndex ? turn : {
-      ...turn,
-      hitl: turn.hitl.map((h, j) => j !== hitlIndex ? h : { ...h, state: approve ? "approved" as const : "rejected" as const }),
-    }));
+    const setHitl = (change: Partial<Hitl>) =>
+      setTurns((prev) => prev.map((turn, i) => i !== turnIndex ? turn : {
+        ...turn,
+        hitl: turn.hitl.map((h, j) => j !== hitlIndex ? h : { ...h, ...change }),
+      }));
+
+    try {
+      const res = await fetch(`${API}/api/agentchat/actions/${action.actionId}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ approve } satisfies ConfirmRequest),
+      });
+      if (res.ok) {
+        setHitl({ state: approve ? "approved" : "rejected", error: undefined });
+        return;
+      }
+      // 失败不静默(八审 #9):409=已处理,403=无写权限,其余给通用提示。
+      const problem = await res.json().catch(() => null);
+      setHitl({
+        error: problem?.detail
+          ?? (res.status === 409 ? m.confirmConflict : res.status === 403 ? m.confirmForbidden : m.confirmFailed),
+      });
+    } catch {
+      setHitl({ error: m.confirmFailed });
+    }
   };
 
   if (!token) {
@@ -190,13 +260,19 @@ export default function Home() {
                       {h.state === "approved" ? m.actionApproved : m.actionRejected}
                     </p>
                   ) : (
-                    <div className="flex gap-2">
-                      <button onClick={() => confirm(ti, hi, true)}
-                        className="px-3 py-1 rounded-sm" style={{ background: "var(--brass)", color: "#171d26" }}>
-                        {m.approve}
-                      </button>
-                      <button onClick={() => confirm(ti, hi, false)}
-                        className="px-3 py-1 rounded-sm border border-[#2c3747]">{m.reject}</button>
+                    <div className="space-y-2">
+                      {/* 流未终结前不开闸(八审 #9):等审计与 done 落定,写操作不与半截回合绑定。 */}
+                      <div className="flex gap-2">
+                        <button onClick={() => confirm(ti, hi, true)} disabled={busy}
+                          className="px-3 py-1 rounded-sm disabled:opacity-40"
+                          style={{ background: "var(--brass)", color: "#171d26" }}>
+                          {m.approve}
+                        </button>
+                        <button onClick={() => confirm(ti, hi, false)} disabled={busy}
+                          className="px-3 py-1 rounded-sm border border-[#2c3747] disabled:opacity-40">{m.reject}</button>
+                      </div>
+                      {busy && <p className="text-xs" style={{ color: "var(--text-dim)" }}>{m.confirmWaitStream}</p>}
+                      {h.error && <p className="andon-red text-xs">{h.error}</p>}
                     </div>
                   )}
                 </div>
@@ -207,7 +283,15 @@ export default function Home() {
                   {turn.audit.invalidCitations.length > 0 && ` ${m.invalidCitations} ${turn.audit.invalidCitations.join(", ")}`}
                 </p>
               )}
-              {turn.error && <p className="andon-red text-sm">{turn.error}</p>}
+              {turn.error && (
+                <div className="flex items-center gap-3">
+                  <p className="andon-red text-sm">{turn.error}</p>
+                  {turn.retryMessage && ti === turns.length - 1 && !busy && (
+                    <button onClick={() => retry(ti)}
+                      className="px-2 py-0.5 text-xs rounded-sm border border-[#2c3747]">{m.retry}</button>
+                  )}
+                </div>
+              )}
             </div>
           )
         )}

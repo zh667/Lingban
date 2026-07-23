@@ -25,6 +25,9 @@ builder.Services.AddAuthorization(options =>
     // 知识库写与读分权(七审 #2):MesReader 只能读,投毒面关闭。
     options.AddPolicy("KnowledgeWrite", policy =>
         policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.KnowledgeManager));
+    // 生产写分权(八审 #3):MesReader 不得确认报工;写路径要求专门角色。
+    options.AddPolicy("MesWrite", policy =>
+        policy.RequireRole(Lingban.Domain.Constants.Roles.Administrator, Lingban.Domain.Constants.Roles.ProductionReporter));
 });
 
 static string RatePartition(HttpContext httpContext) =>

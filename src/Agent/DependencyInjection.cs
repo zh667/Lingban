@@ -5,6 +5,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenAI;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,10 @@ public static class AgentDependencyInjection
         {
             if (scripted)
             {
+                // 醒目标记(八审 #11):输出是固定台词,不得当作真实模型能力展示。
+                provider.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
+                    .CreateLogger("Lingban.Agent.ScriptedDevChatClient")
+                    .LogWarning("Llm:Mode=scripted 已启用——模型输出为固定台词(仅限本地 E2E/演示)。");
                 return new ScriptedDevChatClient().AsBuilder()
                     .UseFunctionInvocation(configure: client =>
                     {

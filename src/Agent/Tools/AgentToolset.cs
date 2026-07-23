@@ -17,13 +17,13 @@ public class AgentToolset
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly MesToolExecutor _executor;
-    private readonly ISender _sender;
+    private readonly Lingban.Application.Common.Interfaces.IUser _user;
     private readonly List<AgentEvent> _pendingEvents = new();
 
-    public AgentToolset(MesToolExecutor executor, ISender sender)
+    public AgentToolset(MesToolExecutor executor, Lingban.Application.Common.Interfaces.IUser user)
     {
         _executor = executor;
-        _sender = sender;
+        _user = user;
     }
 
     /// <summary>当前会话 ID,由 AgentChatService 在循环开始时设置(供 HITL 挂起动作关联)。</summary>
@@ -36,15 +36,30 @@ public class AgentToolset
         return drained;
     }
 
-    public IList<AITool> BuildTools() => new List<AITool>
+    public IList<AITool> BuildTools()
     {
-        AIFunctionFactory.Create(GetTodayWorkOrdersAsync, ToolNames.GetTodayWorkOrders, ToolDescriptions.GetTodayWorkOrders),
-        AIFunctionFactory.Create(AnalyzeDelayedOrdersAsync, ToolNames.AnalyzeDelayedOrders, ToolDescriptions.AnalyzeDelayedOrders),
-        AIFunctionFactory.Create(GetDefectSummaryAsync, ToolNames.GetDefectSummary, ToolDescriptions.GetDefectSummary),
-        AIFunctionFactory.Create(CalculateOeeAsync, ToolNames.CalculateOee, ToolDescriptions.CalculateOee),
-        AIFunctionFactory.Create(SearchKnowledgeAsync, ToolNames.SearchKnowledge, ToolDescriptions.SearchKnowledge),
-        AIFunctionFactory.Create(ProposeReportProductionAsync, "ReportProduction", ToolDescriptions.ReportProduction)
-    };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(GetTodayWorkOrdersAsync, ToolNames.GetTodayWorkOrders, ToolDescriptions.GetTodayWorkOrders),
+            AIFunctionFactory.Create(AnalyzeDelayedOrdersAsync, ToolNames.AnalyzeDelayedOrders, ToolDescriptions.AnalyzeDelayedOrders),
+            AIFunctionFactory.Create(GetDefectSummaryAsync, ToolNames.GetDefectSummary, ToolDescriptions.GetDefectSummary),
+            AIFunctionFactory.Create(CalculateOeeAsync, ToolNames.CalculateOee, ToolDescriptions.CalculateOee),
+            AIFunctionFactory.Create(SearchKnowledgeAsync, ToolNames.SearchKnowledge, ToolDescriptions.SearchKnowledge)
+        };
+
+        // 写工具按角色暴露(八审 #3):无写权限的用户连"提议"入口都不给,
+        // 模型自然回答无此能力;命令层 [Authorize] 是第二道闸。
+        bool canWrite = _user.Roles is { } roles
+            && (roles.Contains(Lingban.Domain.Constants.Roles.Administrator)
+                || roles.Contains(Lingban.Domain.Constants.Roles.ProductionReporter));
+        if (canWrite)
+        {
+            tools.Add(AIFunctionFactory.Create(
+                ProposeReportProductionAsync, ToolNames.ReportProduction, ToolDescriptions.ReportProduction));
+        }
+
+        return tools;
+    }
 
     private async Task<string> GetTodayWorkOrdersAsync(
         [Description("产线编码,可选;不填查全部产线")] string? productionLineCode = null,
@@ -81,30 +96,15 @@ public class AgentToolset
         [Description("其中返工数量")] decimal rework = 0,
         CancellationToken cancellationToken = default)
     {
-        string callId = FunctionInvokingChatClient.CurrentContext?.CallContent.CallId ?? Guid.NewGuid().ToString("N");
-        try
+        // 单一实现在 MesToolExecutor(八审 #4):这里只做事件转发,与只读工具同构。
+        MesToolExecution execution = await _executor.ProposeReportProductionAsync(
+            workOrderCode, completed, qualified, scrap, rework, ConversationId, cancellationToken);
+        if (execution.Success && execution.Result is ReportProductionProposalDto dto)
         {
-            var action = await _sender.Send(new ProposeReportProductionCommand(
-                new ReportProductionProposal(workOrderCode, completed, qualified, scrap, rework),
-                ConversationId), cancellationToken);
-            _pendingEvents.Add(new HitlPendingEvent(action.Id, action.ActionType, action.Summary, action.PayloadJson));
-            return JsonSerializer.Serialize(new
-            {
-                status = "pending_confirmation",
-                actionId = action.Id,
-                summary = action.Summary,
-                note = "已生成待确认动作,须车间人员在界面确认后才会执行;请如实告知用户尚未执行。"
-            }, JsonOptions);
+            _pendingEvents.Add(new HitlPendingEvent(dto.ActionId, dto.ActionType, dto.Summary, dto.PayloadJson));
         }
-        catch (Exception exception) when (
-            exception is Lingban.Application.Common.Exceptions.ValidationException or InvalidOperationException)
-        {
-            _pendingEvents.Add(new ToolErrorEvent(callId, "ReportProduction", exception.Message));
-            return JsonSerializer.Serialize(new
-            {
-                error = new { tool = "ReportProduction", message = exception.Message, recoverable = true }
-            }, JsonOptions);
-        }
+
+        return Render(execution);
     }
 
     private string Render(MesToolExecution execution)

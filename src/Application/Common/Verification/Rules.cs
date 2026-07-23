@@ -426,3 +426,73 @@ public class OeeVerificationRule : IVerificationRule
         });
     }
 }
+
+/// <summary>
+/// 报工提议校验(八审 #4,写工具四件套):独立 SQL 重读 PendingAction,
+/// 逐字段核对"提议已创建且未执行"这一事实——属主、类型、Pending 状态、载荷四账。
+/// 它校验的是提议本身,不是报工结果;报工执行发生在人工确认之后。
+/// </summary>
+public class ReportProductionProposalVerificationRule : IVerificationRule
+{
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private readonly IVerificationQueryService _queries;
+    private readonly IUser _user;
+
+    public ReportProductionProposalVerificationRule(IVerificationQueryService queries, IUser user)
+    {
+        _queries = queries;
+        _user = user;
+    }
+
+    public bool Supports(string toolName) => toolName == ToolNames.ReportProduction;
+
+    public async Task<VerificationResult> VerifyAsync(
+        object toolRequest, object toolResult, CancellationToken cancellationToken)
+    {
+        if (toolResult is not Actions.ReportProductionProposalDto dto)
+        {
+            return TodayWorkOrdersVerificationRule.Mismatched(nameof(Actions.ReportProductionProposalDto));
+        }
+
+        if (toolRequest is not Actions.ProposeReportProductionCommand command)
+        {
+            return TodayWorkOrdersVerificationRule.MissingContext(nameof(Actions.ProposeReportProductionCommand));
+        }
+
+        PendingActionRow? row = await _queries.GetPendingActionAsync(dto.ActionId, cancellationToken);
+        if (row is null)
+        {
+            return new VerificationResult
+            {
+                Status = VerificationStatus.Discrepancy,
+                Summary = $"挂起动作 #{dto.ActionId} 在独立查询路径中不存在。"
+            };
+        }
+
+        var stored = System.Text.Json.JsonSerializer.Deserialize<Actions.ReportProductionProposal>(
+            row.PayloadJson, JsonOptions);
+        Actions.ReportProductionProposal asked = command.Proposal;
+
+        return VerificationResult.FromChecks(new[]
+        {
+            new VerificationCheck("Owner", _user.Id ?? "<anonymous>", row.OwnerUserId, row.OwnerUserId == _user.Id),
+            new VerificationCheck("ActionType", dto.ActionType, row.ActionType,
+                dto.ActionType == row.ActionType && row.ActionType == ToolNames.ReportProduction),
+            new VerificationCheck("Status", dto.Status, "Pending",
+                dto.Status == nameof(Domain.Enums.PendingActionStatus.Pending)
+                    && row.Status == (int)Domain.Enums.PendingActionStatus.Pending),
+            new VerificationCheck("WorkOrderCode", asked.WorkOrderCode, stored?.WorkOrderCode ?? "<null>",
+                stored?.WorkOrderCode == asked.WorkOrderCode),
+            new VerificationCheck("Completed", asked.Completed.ToString(), stored?.Completed.ToString() ?? "<null>",
+                stored?.Completed == asked.Completed),
+            new VerificationCheck("Qualified", asked.Qualified.ToString(), stored?.Qualified.ToString() ?? "<null>",
+                stored?.Qualified == asked.Qualified),
+            new VerificationCheck("Scrap", asked.Scrap.ToString(), stored?.Scrap.ToString() ?? "<null>",
+                stored?.Scrap == asked.Scrap),
+            new VerificationCheck("Rework", asked.Rework.ToString(), stored?.Rework.ToString() ?? "<null>",
+                stored?.Rework == asked.Rework)
+        });
+    }
+}

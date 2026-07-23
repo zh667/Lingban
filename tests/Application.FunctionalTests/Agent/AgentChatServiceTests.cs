@@ -51,7 +51,9 @@ public class AgentChatServiceTests : TestBase
             .UseFunctionInvocation()
             .Build(scope.ServiceProvider);
 
-        var toolset = new AgentToolset(scope.ServiceProvider.GetRequiredService<MesToolExecutor>(), scope.ServiceProvider.GetRequiredService<ISender>());
+        var toolset = new AgentToolset(
+            scope.ServiceProvider.GetRequiredService<MesToolExecutor>(),
+            scope.ServiceProvider.GetRequiredService<Lingban.Application.Common.Interfaces.IUser>());
 
         return new AgentChatService(
             pipeline,
@@ -156,8 +158,10 @@ public class AgentChatServiceTests : TestBase
     public async Task HitlProposalDoesNotMutateUntilConfirmed()
     {
         // 铁律 #5 全链路回归钉:提议 → 零改动;确认 → 执行;拒绝 → 不执行。
+        // 写路径要求 ProductionReporter 角色(八审 #3)。
         await SeedFactoryAsync();
-        string ownerId = await TestApp.RunAsDefaultUserAsync();
+        string ownerId = await TestApp.RunAsUserAsync(
+            "reporter@local", "Testing1234!", [Lingban.Domain.Constants.Roles.ProductionReporter]);
         int orderId;
         using (var seedScope = FunctionalTestSetup.ScopeFactory.CreateScope())
         {
@@ -185,29 +189,137 @@ public class AgentChatServiceTests : TestBase
         (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Id == orderId))
             .CompletedQuantity.ShouldBe(0m, "提议阶段禁止改动生产数据");
 
-        // 确认 → 执行(属主 = test-user,与提议同一 FakeUser)。
+        // 确认 → 执行(属主与提议同一用户)。
         var confirm = new Lingban.Application.Actions.ConfirmPendingActionCommand(pending.ActionId, true);
-        var confirmHandler = new Lingban.Application.Actions.ConfirmPendingActionCommandHandler(
-            scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            new FakeUser(ownerId));
+        var confirmHandler = CreateConfirmHandler(scope, ownerId);
         var approved = await confirmHandler.Handle(confirm, CancellationToken.None);
         approved.Status.ShouldBe(Lingban.Domain.Enums.PendingActionStatus.Approved);
 
         (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Id == orderId))
             .CompletedQuantity.ShouldBe(5m);
 
-        // 重复确认 → 拒绝(状态机)。
-        await Should.ThrowAsync<InvalidOperationException>(
+        // 重复确认 → 409 语义的冲突(八审 #9)。
+        await Should.ThrowAsync<Lingban.Application.Common.Exceptions.ConflictException>(
             () => confirmHandler.Handle(confirm, CancellationToken.None));
 
         // 非属主确认 → NotFound。
-        var intruderHandler = new Lingban.Application.Actions.ConfirmPendingActionCommandHandler(
-            scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
-            scope.ServiceProvider.GetRequiredService<ISender>(),
-            new FakeUser("intruder"));
+        var intruderHandler = CreateConfirmHandler(scope, "intruder");
         await Should.ThrowAsync<NotFoundException>(
             () => intruderHandler.Handle(new Lingban.Application.Actions.ConfirmPendingActionCommand(pending.ActionId, true), CancellationToken.None));
+    }
+
+    private static Lingban.Application.Actions.ConfirmPendingActionCommandHandler CreateConfirmHandler(
+        IServiceScope scope, string userId) => new(
+        scope.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
+        scope.ServiceProvider.GetRequiredService<Lingban.Application.Common.Interfaces.IGenealogySerializedExecutor>(),
+        new FakeUser(userId));
+
+    [Test]
+    public async Task ConcurrentDoubleApproveExecutesExactlyOnce()
+    {
+        // 八审 #1(实锤复现过:双击双报工)回归钉:并发确认被闸门串行,后到者 409,报工只落一次。
+        await SeedFactoryAsync();
+        string ownerId = await TestApp.RunAsUserAsync(
+            "concurrent@local", "Testing1234!", [Lingban.Domain.Constants.Roles.ProductionReporter]);
+        int actionId = await SeedPendingActionAsync(ownerId, "WO-CHAT", 5m, 5m);
+
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(async () =>
+        {
+            using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+            try
+            {
+                await CreateConfirmHandler(scope, ownerId).Handle(
+                    new Lingban.Application.Actions.ConfirmPendingActionCommand(actionId, true),
+                    CancellationToken.None);
+                return (Success: true, Exception: (Exception?)null);
+            }
+            catch (Exception exception)
+            {
+                return (Success: false, Exception: exception);
+            }
+        })));
+
+        outcomes.Count(outcome => outcome.Success).ShouldBe(1, "并发双确认必须恰好一次成功");
+        outcomes.Single(outcome => !outcome.Success).Exception
+            .ShouldBeOfType<Lingban.Application.Common.Exceptions.ConflictException>();
+
+        using var checkScope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var db = checkScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Code == "WO-CHAT"))
+            .CompletedQuantity.ShouldBe(5m, "双确认不得双报工");
+    }
+
+    [Test]
+    public async Task ConcurrentApproveAndRejectStaysConsistent()
+    {
+        // 八审 #1 变体:批准与拒绝并发,最终状态与生产数据必须一致——
+        // Approved ⇒ 报工已落;Rejected ⇒ 零改动;不存在"已报工但显示 Rejected"。
+        await SeedFactoryAsync();
+        string ownerId = await TestApp.RunAsUserAsync(
+            "race@local", "Testing1234!", [Lingban.Domain.Constants.Roles.ProductionReporter]);
+        int actionId = await SeedPendingActionAsync(ownerId, "WO-CHAT", 5m, 5m);
+
+        var outcomes = await Task.WhenAll(new[] { true, false }.Select(approve => Task.Run(async () =>
+        {
+            using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+            try
+            {
+                await CreateConfirmHandler(scope, ownerId).Handle(
+                    new Lingban.Application.Actions.ConfirmPendingActionCommand(actionId, approve),
+                    CancellationToken.None);
+                return true;
+            }
+            catch (Lingban.Application.Common.Exceptions.ConflictException)
+            {
+                return false;
+            }
+        })));
+
+        outcomes.Count(success => success).ShouldBe(1, "批准/拒绝并发必须恰好一方生效");
+
+        using var checkScope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        var db = checkScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var action = await db.PendingActions.AsNoTracking().FirstAsync(a => a.Id == actionId);
+        decimal completed = (await db.WorkOrders.AsNoTracking().FirstAsync(o => o.Code == "WO-CHAT")).CompletedQuantity;
+        if (action.Status == Lingban.Domain.Enums.PendingActionStatus.Approved)
+        {
+            completed.ShouldBe(5m);
+        }
+        else
+        {
+            action.Status.ShouldBe(Lingban.Domain.Enums.PendingActionStatus.Rejected);
+            completed.ShouldBe(0m);
+        }
+    }
+
+    [Test]
+    public async Task MesReaderCannotConfirmProductionWrite()
+    {
+        // 八审 #3 回归钉:只读角色走命令层也被 [Authorize] 拦下(端点策略之外的第二道闸)。
+        await SeedFactoryAsync();
+        string ownerId = await TestApp.RunAsUserAsync(
+            "writer@local", "Testing1234!", [Lingban.Domain.Constants.Roles.ProductionReporter]);
+        int actionId = await SeedPendingActionAsync(ownerId, "WO-CHAT", 5m, 5m);
+
+        await TestApp.RunAsUserAsync("reader@local", "Testing1234!", [Lingban.Domain.Constants.Roles.MesReader]);
+        await Should.ThrowAsync<Lingban.Application.Common.Exceptions.ForbiddenAccessException>(
+            () => TestApp.SendAsync(new Lingban.Application.Actions.ConfirmPendingActionCommand(actionId, true)));
+    }
+
+    private static async Task<int> SeedPendingActionAsync(
+        string ownerId, string workOrderCode, decimal completed, decimal qualified)
+    {
+        var action = new Lingban.Domain.Entities.Actions.PendingAction
+        {
+            OwnerUserId = ownerId,
+            ActionType = "ReportProduction",
+            Summary = $"报工 {workOrderCode}:完工 {completed}",
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(
+                new Lingban.Application.Actions.ReportProductionProposal(workOrderCode, completed, qualified, 0m, 0m),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))
+        };
+        await TestApp.AddAsync(action);
+        return action.Id;
     }
 
     [Test]
@@ -237,6 +349,34 @@ public class AgentChatServiceTests : TestBase
     }
 
     [Test]
+    public async Task DuplicateKeyWithNullConversationIdIsRejectedWithoutNewConversation()
+    {
+        // 八审 #2 回归钉:首次请求响应丢失后,客户端带 null conversationId 重放同一键——
+        // 预检按属主而非会话,必须拦下,且不得多出一个会话。
+        await SeedFactoryAsync();
+        using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
+        AgentChatService service = CreateService(scope, new ScriptedChatClient(null, new[] { "答一。" }));
+        var key = Guid.NewGuid();
+        await foreach (AgentEvent _ in service.ChatAsync(null, "问题一", key))
+        {
+        }
+
+        int conversationsAfterFirst = await TestApp.CountAsync<Conversation>();
+
+        using var scope2 = FunctionalTestSetup.ScopeFactory.CreateScope();
+        AgentChatService retry = CreateService(scope2, new ScriptedChatClient(null, new[] { "不该执行。" }));
+        var events = new List<AgentEvent>();
+        await foreach (AgentEvent e in retry.ChatAsync(null, "问题一", key))
+        {
+            events.Add(e);
+        }
+
+        events.OfType<ErrorEvent>().ShouldHaveSingleItem().Message.ShouldContain("DUPLICATE");
+        events.OfType<DoneEvent>().ShouldBeEmpty();
+        (await TestApp.CountAsync<Conversation>()).ShouldBe(conversationsAfterFirst, "重放不得新建会话");
+    }
+
+    [Test]
     public async Task ConversationIsInvisibleToNonOwner()
     {
         // M4 债回归钉:非属主访问会话 = 不存在(NotFound),防 conversationId 枚举。
@@ -259,7 +399,9 @@ public class AgentChatServiceTests : TestBase
         IChatClient client = pipeline.AsBuilder().UseFunctionInvocation().Build(scope2.ServiceProvider);
         var intruder = new AgentChatService(
             client,
-            new AgentToolset(scope2.ServiceProvider.GetRequiredService<MesToolExecutor>(), scope2.ServiceProvider.GetRequiredService<ISender>()),
+            new AgentToolset(
+                scope2.ServiceProvider.GetRequiredService<MesToolExecutor>(),
+                scope2.ServiceProvider.GetRequiredService<Lingban.Application.Common.Interfaces.IUser>()),
             scope2.ServiceProvider.GetRequiredService<IAgentInvocationClock>(),
             scope2.ServiceProvider.GetRequiredService<IApplicationDbContext>(),
             new PinnedTimeProvider(T0.AddHours(2)),

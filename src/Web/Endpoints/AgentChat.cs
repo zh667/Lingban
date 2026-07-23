@@ -26,8 +26,9 @@ public class AgentChat : IEndpointGroup
             .RequireAuthorization("MesData")
             .RequireRateLimiting("agent-chat");
 
+        // 确认是生产写操作(八审 #3):MesData(含只读角色)不够,必须 MesWrite。
         groupBuilder.MapPost(ConfirmAction, "/actions/{actionId:int}/confirm")
-            .RequireAuthorization("MesData");
+            .RequireAuthorization("MesWrite");
     }
 
     public record ConfirmRequest(bool Approve);
@@ -56,9 +57,11 @@ public class AgentChat : IEndpointGroup
     {
         string streamKey = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
             ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+        // 上限语义是"每实例"(八审 #8):进程内静态字典,多实例部署时各算各的;
+        // 分布式租约版入债表,触发条件=第二个实例上线。
         if (ActiveStreams.AddOrUpdate(streamKey, 1, (_, count) => count + 1) > MaxStreamsPerUser)
         {
-            ActiveStreams.AddOrUpdate(streamKey, 0, (_, count) => count - 1);
+            ReleaseStream(streamKey);
             httpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             await httpContext.Response.WriteAsJsonAsync(new { error = "TOO_MANY_STREAMS", max = MaxStreamsPerUser }, cancellationToken);
             return;
@@ -102,7 +105,18 @@ public class AgentChat : IEndpointGroup
         }
         finally
         {
-            ActiveStreams.AddOrUpdate(streamKey, 0, (_, count) => Math.Max(0, count - 1));
+            ReleaseStream(streamKey);
+        }
+    }
+
+    private static void ReleaseStream(string streamKey)
+    {
+        int remaining = ActiveStreams.AddOrUpdate(streamKey, 0, (_, count) => Math.Max(0, count - 1));
+        if (remaining == 0)
+        {
+            // 条件移除:仅当值仍为 0 时删条目,避免零值条目随身份数量无限积累(八审 #8)。
+            ((System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<string, int>>)ActiveStreams)
+                .Remove(new System.Collections.Generic.KeyValuePair<string, int>(streamKey, 0));
         }
     }
 }

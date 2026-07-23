@@ -43,6 +43,7 @@ public static class DependencyInjection
         builder.Services.AddScoped<IVerificationRule, DefectSummaryVerificationRule>();
         builder.Services.AddScoped<IVerificationRule, OeeVerificationRule>();
         builder.Services.AddScoped<IVerificationRule, KnowledgeSearchVerificationRule>();
+        builder.Services.AddScoped<IVerificationRule, ReportProductionProposalVerificationRule>();
 
         builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
         {

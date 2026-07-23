@@ -155,6 +155,17 @@ public class VerificationQueryService : IVerificationQueryService
             """).SingleAsync(cancellationToken);
     }
 
+    public async Task<PendingActionRow?> GetPendingActionAsync(int actionId, CancellationToken cancellationToken)
+    {
+        string tenant = _tenantContext.TenantId;
+        List<PendingActionRow> rows = await _context.Database.SqlQuery<PendingActionRow>($"""
+            SELECT "OwnerUserId", "ActionType", "Status", "PayloadJson"
+            FROM "PendingActions"
+            WHERE "TenantId" = {tenant} AND "Id" = {actionId}
+            """).ToListAsync(cancellationToken);
+        return rows.SingleOrDefault();
+    }
+
     public async Task<double> SumDowntimeUnionMinutesAsync(
         int equipmentId,
         IReadOnlyList<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)> periods,

@@ -30,5 +30,12 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(message => new { message.TenantId, message.ConversationId });
+
+        // 幂等键唯一性由数据库强制(八审 #2):check-then-act 的并发窗口关死;
+        // 键不含 ConversationId,首次请求重放(conversationId=null)同样撞索引。
+        builder.Property(message => message.OwnerUserId).HasMaxLength(128);
+        builder.HasIndex(message => new { message.TenantId, message.OwnerUserId, message.ClientMessageId })
+            .IsUnique()
+            .HasFilter("\"ClientMessageId\" IS NOT NULL");
     }
 }

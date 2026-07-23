@@ -92,14 +92,13 @@ public class AgentChatService : IAgentChatService
         // 三审设计约束:进入循环先钉死"现在",本次调用内全部工具与校验共用。
         _clock.Pin(_timeProvider.GetUtcNow());
 
-        Conversation conversation = await LoadOrCreateConversationAsync(conversationId, userMessage, cancellationToken);
-        _toolset.ConversationId = conversation.Id;
-
-        // 客户端幂等键(六审遗留债):同一 clientMessageId 重试不产生重复回合。
+        // 幂等键预检按属主而非会话(八审 #2):首次请求响应丢失后带 null conversationId
+        // 重放,也会在这里被既有键拦下,不会先新建会话再绕过检查。
+        string ownerUserId = _user.Id ?? throw new UnauthorizedAccessException("Authenticated user is required.");
         if (clientMessageId is Guid clientKey)
         {
             bool duplicate = await _context.ConversationMessages.AnyAsync(
-                message => message.ConversationId == conversation.Id && message.ClientMessageId == clientKey,
+                message => message.OwnerUserId == ownerUserId && message.ClientMessageId == clientKey,
                 cancellationToken);
             if (duplicate)
             {
@@ -107,6 +106,9 @@ public class AgentChatService : IAgentChatService
                 yield break;
             }
         }
+
+        Conversation conversation = await LoadOrCreateConversationAsync(conversationId, userMessage, cancellationToken);
+        _toolset.ConversationId = conversation.Id;
 
         List<ChatMessage> messages = await BuildContextAsync(conversation, cancellationToken);
         messages.Add(new ChatMessage(ChatRole.User, userMessage));
@@ -116,9 +118,27 @@ public class AgentChatService : IAgentChatService
             ConversationId = conversation.Id,
             Role = ConversationRole.User,
             Content = userMessage,
-            ClientMessageId = clientMessageId
+            ClientMessageId = clientMessageId,
+            OwnerUserId = ownerUserId
         });
-        await _context.SaveChangesAsync(cancellationToken);
+
+        // 预检只是快路径,唯一索引才是保证(并发同键两个请求都能通过预检):
+        // 撞索引的一方按重复处理,不进模型循环。
+        bool duplicateOnSave = false;
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException) when (clientMessageId is not null)
+        {
+            duplicateOnSave = true;
+        }
+
+        if (duplicateOnSave)
+        {
+            yield return new ErrorEvent("DUPLICATE_MESSAGE:该消息已提交过,请勿重复发送。");
+            yield break;
+        }
 
         var chatOptions = new ChatOptions { Tools = _toolset.BuildTools() };
         var answer = new StringBuilder();

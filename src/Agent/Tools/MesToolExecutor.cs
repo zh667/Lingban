@@ -122,6 +122,27 @@ public class MesToolExecutor
         return RunAsync(ToolNames.CalculateOee, query, token => _sender.Send(query, token), cancellationToken);
     }
 
+    /// <summary>
+    /// 报工提议(唯一的写类工具,单一实现在此):只创建 PendingAction,不改生产数据;
+    /// 执行发生在人工确认之后。MCP 面暂不暴露(stdio 无属主身份,见 AGENTS §10 例外登记)。
+    /// </summary>
+    public Task<MesToolExecution> ProposeReportProductionAsync(
+        string workOrderCode, decimal completed, decimal qualified, decimal scrap, decimal rework,
+        int? conversationId, CancellationToken cancellationToken)
+    {
+        var command = new Lingban.Application.Actions.ProposeReportProductionCommand(
+            new Lingban.Application.Actions.ReportProductionProposal(
+                workOrderCode, completed, qualified, scrap, rework),
+            conversationId);
+        return RunAsync(ToolNames.ReportProduction, command, async token =>
+        {
+            var action = await _sender.Send(command, token);
+            return new Lingban.Application.Actions.ReportProductionProposalDto(
+                action.Id, action.ActionType, action.Summary, action.Status.ToString(),
+                workOrderCode, completed, qualified, scrap, rework, action.PayloadJson);
+        }, cancellationToken);
+    }
+
     private async Task<MesToolExecution> RunAsync<TResult>(
         string toolName, object request, Func<CancellationToken, Task<TResult>> execute, CancellationToken cancellationToken)
         where TResult : notnull
@@ -142,6 +163,11 @@ public class MesToolExecutor
         catch (Ardalis.GuardClauses.NotFoundException exception)
         {
             return ErrorExecution(new MesToolError(toolName, exception.Message, Recoverable: true));
+        }
+        catch (Lingban.Application.Common.Exceptions.ForbiddenAccessException)
+        {
+            // 工具面按角色隐藏未授权工具,这里是纵深防御(八审 #3)。
+            return ErrorExecution(new MesToolError(toolName, "当前用户无权执行该工具。", Recoverable: false));
         }
         catch (InvalidOperationException)
         {

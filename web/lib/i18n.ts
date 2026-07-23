@@ -26,6 +26,11 @@ export const messages = {
     invalidCitations: "引用问题",
     emptyState: "我是领班。车间的工单、质量、设备、SOP,问我。每个数字都经过独立校验。",
     streamError: "连接中断,本回合已标记失败,请重试。",
+    retry: "重试",
+    confirmConflict: "该动作已处理过,请刷新查看结果。",
+    confirmForbidden: "当前账号没有生产写权限,无法确认。",
+    confirmFailed: "确认失败,请稍后重试。",
+    confirmWaitStream: "等待本回合结束后可确认。",
   },
   "en-US": {
     appName: "Lingban",
@@ -53,6 +58,11 @@ export const messages = {
     invalidCitations: "Citation issues",
     emptyState: "I am Lingban, your shift lead. Ask about orders, quality, equipment, SOPs. Every number is independently verified.",
     streamError: "Connection lost. This turn was marked failed — please retry.",
+    retry: "Retry",
+    confirmConflict: "This action was already processed. Refresh to see the result.",
+    confirmForbidden: "This account has no production write permission.",
+    confirmFailed: "Confirmation failed. Try again later.",
+    confirmWaitStream: "Available after this turn finishes.",
   },
 } as const;
 
