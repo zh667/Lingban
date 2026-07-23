@@ -102,6 +102,11 @@ public class VerificationQueryService : IVerificationQueryService
         foreach (IntervalRow row in rows)
         {
             DateTimeOffset end = row.End ?? openClip;
+            if (end > openClip)
+            {
+                end = openClip;
+            }
+
             if (end <= row.Start)
             {
                 continue;

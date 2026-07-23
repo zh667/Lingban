@@ -136,7 +136,8 @@ public class RecordConsumptionCommandHandler : IRequestHandler<RecordConsumption
         bool matches = existing.WorkOrderId == request.WorkOrderId
             && existing.MaterialLotId == request.MaterialLotId
             && existing.Quantity == request.Quantity
-            && existing.WorkstationId == request.WorkstationId;
+            && existing.WorkstationId == request.WorkstationId
+            && existing.RecordedBy == request.RecordedBy;
 
         if (!matches)
         {

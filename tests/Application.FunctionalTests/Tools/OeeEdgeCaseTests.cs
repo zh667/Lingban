@@ -16,6 +16,8 @@ namespace Lingban.Application.FunctionalTests.Tools;
 /// </summary>
 public class OeeEdgeCaseTests : TestBase
 {
+    private static readonly DateTimeOffset PinnedAsOf = new(2026, 7, 21, 12, 0, 0, TimeSpan.Zero);
+
     private int _equipmentId;
 
     private async Task SeedGapCalendarFactoryAsync()
@@ -59,14 +61,15 @@ public class OeeEdgeCaseTests : TestBase
             await context.SaveChangesAsync();
         });
 
-        OeeDto oee = await TestApp.SendAsync(new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21)));
+        var query = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), PinnedAsOf);
+        OeeDto oee = await TestApp.SendAsync(query);
 
         // 旧的首尾包络算法会得到 540(含午休);区间求和必须是 480。
         oee.PlannedMinutes.ShouldBe(480d, tolerance: 0.01);
         oee.DowntimeMinutes.ShouldBe(0d, tolerance: 0.01);
         oee.Availability.ShouldBe(1d, tolerance: 0.0001);
 
-        (await VerifyAsync(oee)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(query, oee)).Status.ShouldBe(VerificationStatus.Verified);
     }
 
     [Test]
@@ -96,10 +99,11 @@ public class OeeEdgeCaseTests : TestBase
             await context.SaveChangesAsync();
         });
 
-        OeeDto oee = await TestApp.SendAsync(new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21)));
+        var query = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), PinnedAsOf);
+        OeeDto oee = await TestApp.SendAsync(query);
 
         oee.DowntimeMinutes.ShouldBe(180d, tolerance: 0.01);
-        (await VerifyAsync(oee)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(query, oee)).Status.ShouldBe(VerificationStatus.Verified);
     }
 
     [Test]
@@ -120,27 +124,54 @@ public class OeeEdgeCaseTests : TestBase
         });
 
         var asOf = new DateTimeOffset(2026, 7, 21, 2, 0, 0, TimeSpan.Zero);
-        OeeDto oee = await TestApp.SendAsync(
-            new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), asOf));
+        var query = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), asOf);
+        OeeDto oee = await TestApp.SendAsync(query);
 
         oee.DowntimeMinutes.ShouldBe(60d, tolerance: 0.01);
-        (await VerifyAsync(oee)).Status.ShouldBe(VerificationStatus.Verified);
+        (await VerifyAsync(query, oee)).Status.ShouldBe(VerificationStatus.Verified);
+    }
+
+    [Test]
+    public async Task ClosedDowntimeIsAlsoClippedForHistoricalReplay()
+    {
+        // Codex 三审 #4:已关闭记录(01:00–03:00)在 as-of 02:00 的回放里只能看到 60 分钟。
+        await SeedGapCalendarFactoryAsync();
+        await TestApp.ExecuteDbContextAsync(async context =>
+        {
+            context.Add(new DowntimeRecord
+            {
+                EquipmentId = _equipmentId,
+                Reason = "已结束的停机",
+                StartUtc = new DateTimeOffset(2026, 7, 21, 1, 0, 0, TimeSpan.Zero),
+                EndUtc = new DateTimeOffset(2026, 7, 21, 3, 0, 0, TimeSpan.Zero),
+                Source = DataSource.Simulated
+            });
+            await context.SaveChangesAsync();
+        });
+
+        var replayAsOf = new DateTimeOffset(2026, 7, 21, 2, 0, 0, TimeSpan.Zero);
+        var query = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), replayAsOf);
+        OeeDto oee = await TestApp.SendAsync(query);
+
+        oee.DowntimeMinutes.ShouldBe(60d, tolerance: 0.01);
+        (await VerifyAsync(query, oee)).Status.ShouldBe(VerificationStatus.Verified);
     }
 
     [Test]
     public async Task TamperedOeeDowntimeIsCaught()
     {
         await SeedGapCalendarFactoryAsync();
-        OeeDto oee = await TestApp.SendAsync(new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21)));
+        var query = new CalculateOeeQuery(_equipmentId, new DateOnly(2026, 7, 21), PinnedAsOf);
+        OeeDto oee = await TestApp.SendAsync(query);
 
         OeeDto tampered = oee with { DowntimeMinutes = oee.DowntimeMinutes + 30d };
-        (await VerifyAsync(tampered)).Status.ShouldBe(VerificationStatus.Discrepancy);
+        (await VerifyAsync(query, tampered)).Status.ShouldBe(VerificationStatus.Discrepancy);
     }
 
-    private static async Task<VerificationResult> VerifyAsync(OeeDto result)
+    private static async Task<VerificationResult> VerifyAsync(CalculateOeeQuery query, OeeDto result)
     {
         using var scope = FunctionalTestSetup.ScopeFactory.CreateScope();
         var verifier = scope.ServiceProvider.GetRequiredService<IFactVerifier>();
-        return await verifier.VerifyAsync(ToolNames.CalculateOee, result);
+        return await verifier.VerifyAsync(ToolNames.CalculateOee, query, result);
     }
 }

@@ -69,6 +69,14 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
         builder.HasIndex(order => new { order.TenantId, order.Code }).IsUnique();
         builder.HasIndex(order => new { order.TenantId, order.Status });
 
+        // 乐观并发:未走闸门的状态转换(Start/Cancel/Release)并发时后写方冲突,
+        // 杜绝"带 ActualStartUtc 的 Cancelled 工单"这类双成功(Codex 三审 #2)。
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
+
         builder.HasOne(order => order.Product)
             .WithMany()
             .HasForeignKey(order => order.ProductId)

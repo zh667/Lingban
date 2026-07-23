@@ -30,20 +30,28 @@ public class ReportProductionCommandValidator : AbstractValidator<ReportProducti
 public class ReportProductionCommandHandler : IRequestHandler<ReportProductionCommand>
 {
     private readonly IApplicationDbContext _context;
+    private readonly IGenealogySerializedExecutor _serializedExecutor;
 
-    public ReportProductionCommandHandler(IApplicationDbContext context)
+    public ReportProductionCommandHandler(
+        IApplicationDbContext context, IGenealogySerializedExecutor serializedExecutor)
     {
         _context = context;
+        _serializedExecutor = serializedExecutor;
     }
 
     public async Task Handle(ReportProductionCommand request, CancellationToken cancellationToken)
     {
-        WorkOrder? order = await _context.WorkOrders
-            .FirstOrDefaultAsync(order => order.Id == request.WorkOrderId, cancellationToken);
-        Guard.Against.NotFound(request.WorkOrderId, order);
+        // 报工与完工共用闸门(Codex 三审 #1):"完工校验通过后又改报工量"的竞态窗口关闭。
+        await _serializedExecutor.ExecuteAsync<object?>(async innerToken =>
+        {
+            WorkOrder? order = await _context.WorkOrders
+                .FirstOrDefaultAsync(order => order.Id == request.WorkOrderId, innerToken);
+            Guard.Against.NotFound(request.WorkOrderId, order);
 
-        order.ReportProduction(request.Completed, request.Qualified, request.Scrap, request.Rework);
-        await _context.SaveChangesAsync(cancellationToken);
+            order.ReportProduction(request.Completed, request.Qualified, request.Scrap, request.Rework);
+            await _context.SaveChangesAsync(innerToken);
+            return null;
+        }, cancellationToken);
     }
 }
 

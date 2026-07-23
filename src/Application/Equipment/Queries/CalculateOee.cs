@@ -77,11 +77,16 @@ public class CalculateOeeQueryHandler : IRequestHandler<CalculateOeeQuery, OeeDt
             .Select(record => new { record.StartUtc, record.EndUtc })
             .ToListAsync(cancellationToken);
 
-        // 开放停机(EndUtc null)截断到 asOf 与日终的较早者——未发生的时间不算停机;
+        // as-of 语义:AsOf 之后的时间一律不算停机——开放停机截断,已关闭记录跨过
+        // AsOf 时同样截断(历史回放只能看到当时已发生的部分,Codex 三审 #4)。
         // 多条停机先做区间并集,重叠不重复计数;再与班次区间求交。
-        DateTimeOffset openEndClip = asOf < dayEnd ? asOf : dayEnd;
+        DateTimeOffset clip = asOf < dayEnd ? asOf : dayEnd;
         var effective = downtimes
-            .Select(downtime => (Start: downtime.StartUtc, End: downtime.EndUtc ?? openEndClip))
+            .Select(downtime =>
+            {
+                DateTimeOffset end = downtime.EndUtc ?? clip;
+                return (Start: downtime.StartUtc, End: end < clip ? end : clip);
+            })
             .Where(interval => interval.End > interval.Start)
             .OrderBy(interval => interval.Start)
             .ToList();
